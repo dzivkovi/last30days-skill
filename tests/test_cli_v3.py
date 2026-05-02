@@ -143,6 +143,31 @@ class CliV3Tests(unittest.TestCase):
         _, kwargs = write_text.call_args
         self.assertEqual("utf-8", kwargs.get("encoding"))
 
+    def test_compute_save_path_display_uses_posix_slashes_under_home(self):
+        # Regression: f"~/{relative}" stringified pathlib.Path with the
+        # OS-native separator, producing "~/Documents\\Last30Days\\..." on
+        # Windows that no shell or File Explorer could open. The fix is
+        # f"~/{relative.as_posix()}" which forces forward slashes regardless
+        # of host OS. On POSIX hosts this asserts the contract for
+        # cross-platform safety; on Windows hosts it would fail without the fix.
+        import shutil
+        real_home = Path.home()
+        tmp_under_home = Path(tempfile.mkdtemp(prefix="l30d_save_path_", dir=str(real_home)))
+        try:
+            save_dir = tmp_under_home / "Documents" / "Last30Days"
+            save_dir.mkdir(parents=True, exist_ok=True)
+            display = cli.compute_save_path_display(
+                str(save_dir), "british airways middle east", "v3", "compact"
+            )
+            self.assertTrue(display.startswith("~/"), f"Expected '~/' prefix, got: {display}")
+            self.assertNotIn("\\", display, f"Backslash leaked into display: {display}")
+            self.assertTrue(
+                display.endswith("british-airways-middle-east-raw-v3.md"),
+                f"Expected slug+suffix at end, got: {display}",
+            )
+        finally:
+            shutil.rmtree(tmp_under_home, ignore_errors=True)
+
     def test_persist_report_updates_run_status_on_success_and_failure(self):
         report = self.make_report()
 
