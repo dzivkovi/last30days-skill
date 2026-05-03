@@ -199,3 +199,97 @@ class TestRedditNeverInCoreErrored:
         # Reddit is always-active in core (public path), error doesn't demote it
         assert "reddit" in q["core_active"]
         assert q["score_pct"] == 100
+
+
+class TestYouTubeDegraded:
+    """YouTube is `degraded` when videos returned but transcripts below threshold.
+
+    Canonical failure mode: a stale yt-dlp binary still finds videos via search
+    but silently fails every transcript fetch because YouTube's caption format
+    has moved on. Pre-fix the user got no signal of this; the footer hid zero,
+    and quality_nudge only checked top-level errors.
+    """
+
+    def test_zero_of_six_transcripts_flags_degraded(self):
+        q = _compute(
+            ytdlp_installed=True,
+            result_overrides={
+                "youtube_videos_count": 6,
+                "youtube_transcripts_count": 0,
+            },
+        )
+        assert "youtube" in q["core_degraded"]
+        assert q["nudge_text"] is not None
+        # Counts surface in the message so the user sees the actual ratio
+        assert "6 videos" in q["nudge_text"]
+        assert "0 transcripts" in q["nudge_text"]
+        assert "stale yt-dlp" in q["nudge_text"].lower()
+        # Updates path mentions all three common package managers
+        assert "scoop" in q["nudge_text"].lower()
+        assert "brew" in q["nudge_text"].lower()
+        assert "pip install" in q["nudge_text"].lower()
+
+    def test_five_of_six_transcripts_does_not_flag_degraded(self):
+        # 83% transcript success - well above the 50% threshold
+        # X is also enabled so all 5 cores are active and no nudge should fire
+        q = _compute(
+            config_overrides={"AUTH_TOKEN": "tok123"},
+            ytdlp_installed=True,
+            result_overrides={
+                "youtube_videos_count": 6,
+                "youtube_transcripts_count": 5,
+            },
+        )
+        assert "youtube" not in q["core_degraded"]
+        assert q["nudge_text"] is None  # All 5 core sources active, no degradation
+
+    def test_zero_videos_does_not_flag_degraded(self):
+        # No videos returned -> degraded check is meaningless and must not fire
+        q = _compute(
+            ytdlp_installed=True,
+            result_overrides={
+                "youtube_videos_count": 0,
+                "youtube_transcripts_count": 0,
+            },
+        )
+        assert "youtube" not in q["core_degraded"]
+
+    def test_one_of_three_transcripts_flags_degraded(self):
+        # 33% - below 50% threshold; the canonical "yt-dlp partially working" case
+        q = _compute(
+            ytdlp_installed=True,
+            result_overrides={
+                "youtube_videos_count": 3,
+                "youtube_transcripts_count": 1,
+            },
+        )
+        assert "youtube" in q["core_degraded"]
+        assert "Degraded: YouTube" in q["nudge_text"]
+
+    def test_threshold_tunable_via_config(self):
+        # Operator overrides threshold via env-style config to be more permissive
+        q = _compute(
+            config_overrides={"DEGRADED_TRANSCRIPT_THRESHOLD": "0.1"},
+            ytdlp_installed=True,
+            result_overrides={
+                "youtube_videos_count": 10,
+                "youtube_transcripts_count": 2,  # 20%, below default 50% but above override 10%
+            },
+        )
+        assert "youtube" not in q["core_degraded"]
+
+    def test_degraded_does_not_affect_score(self):
+        # Degradation is informational, not score-affecting; YouTube still counts as active
+        q = _compute(
+            config_overrides={"AUTH_TOKEN": "tok123"},
+            ytdlp_installed=True,
+            result_overrides={
+                "youtube_videos_count": 6,
+                "youtube_transcripts_count": 0,
+            },
+        )
+        assert "youtube" in q["core_active"]
+        assert q["score_pct"] == 100  # Full active count regardless of degradation
+        # But nudge still fires
+        assert q["nudge_text"] is not None
+        assert "Degraded: YouTube" in q["nudge_text"]

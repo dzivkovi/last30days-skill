@@ -865,7 +865,18 @@ def main() -> int:
     # Show quality nudge if applicable
     try:
         from lib import quality_nudge
-        quality = quality_nudge.compute_quality_score(config, {})
+        # Populate transcript-fetch ratio so quality_nudge can detect the
+        # degraded-YouTube failure mode (videos returned but transcripts
+        # silently failed - typically a stale yt-dlp binary).
+        youtube_items = report.items_by_source.get("youtube") or []
+        research_results = {
+            "youtube_videos_count": len(youtube_items),
+            "youtube_transcripts_count": sum(
+                1 for it in youtube_items
+                if (it.metadata.get("transcript_highlights") or it.metadata.get("transcript_snippet"))
+            ),
+        }
+        quality = quality_nudge.compute_quality_score(config, research_results)
         if quality.get("nudge_text"):
             sys.stderr.write(f"\n{quality['nudge_text']}\n")
             sys.stderr.flush()
