@@ -551,5 +551,90 @@ class DegradedRunBannerTests(unittest.TestCase):
         self.assertIn("--plan", text)
 
 
+class YoutubeFooterTranscriptRatioTests(unittest.TestCase):
+    """The YouTube footer line must surface the transcript-fetch ratio in all
+    cases where videos were returned. Pre-fix the segment was suppressed when
+    transcripts == 0, which converted the canonical stale-yt-dlp failure mode
+    into a silent absence at the footer (the very surface users read for
+    'did this work?'). Always-render the ratio so zero is loud.
+    """
+
+    def _build_youtube_report(self, transcript_flags: list[bool]) -> schema.Report:
+        """Build a Report with one YouTube item per entry in transcript_flags.
+        True means the item has transcript data; False means it does not.
+        """
+        items = []
+        for idx, has_transcript in enumerate(transcript_flags):
+            metadata = {"views": 1000}
+            if has_transcript:
+                metadata["transcript_highlights"] = ["Some pre-extracted quote."]
+            items.append(schema.SourceItem(
+                item_id=f"yt{idx}",
+                source="youtube",
+                title=f"Video {idx}",
+                body=f"Description for video {idx}.",
+                url=f"https://youtube.com/watch?v=v{idx}",
+                container="some-channel",
+                published_at="2026-04-15",
+                date_confidence="high",
+                engagement={"views": 1000, "likes": 100},
+                metadata=metadata,
+            ))
+        return schema.Report(
+            topic="test topic",
+            range_from="2026-04-01",
+            range_to="2026-05-01",
+            generated_at="2026-05-01T00:00:00+00:00",
+            provider_runtime=schema.ProviderRuntime(
+                reasoning_provider="gemini",
+                planner_model="gemini",
+                rerank_model="gemini",
+            ),
+            query_plan=schema.QueryPlan(
+                intent="general",
+                freshness_mode="balanced_recent",
+                cluster_mode="none",
+                raw_topic="test topic",
+                subqueries=[schema.SubQuery(
+                    label="primary", search_query="test topic",
+                    ranking_query="What about test topic?", sources=["youtube"],
+                )],
+                source_weights={"youtube": 1.0},
+            ),
+            clusters=[],
+            ranked_candidates=[],
+            items_by_source={"youtube": items},
+            errors_by_source={},
+        )
+
+    def test_zero_transcripts_with_videos_present_renders_zero_over_total(self):
+        # The canonical stale-yt-dlp case: 6 videos found, 0 transcripts captured.
+        # Pre-fix the footer hid this entirely; post-fix it must say "0/6 with transcripts".
+        report = self._build_youtube_report([False] * 6)
+        text = render.render_compact(report)
+        self.assertIn("0/6 with transcripts", text)
+
+    def test_partial_transcripts_renders_ratio(self):
+        # 5 of 6 transcripts captured - shows ratio so user knows one was missed.
+        report = self._build_youtube_report([True] * 5 + [False])
+        text = render.render_compact(report)
+        self.assertIn("5/6 with transcripts", text)
+
+    def test_full_transcripts_renders_ratio(self):
+        # All 3 transcripts captured - still shows ratio for consistency.
+        report = self._build_youtube_report([True] * 3)
+        text = render.render_compact(report)
+        self.assertIn("3/3 with transcripts", text)
+
+    def test_no_videos_no_transcript_segment(self):
+        # When YouTube has no items at all, the YouTube footer line is
+        # suppressed entirely (existing behavior) - the transcript segment
+        # should not appear without a parent line.
+        report = self._build_youtube_report([])
+        text = render.render_compact(report)
+        # No YouTube footer line at all - so no transcript segment either
+        self.assertNotIn("with transcripts", text)
+
+
 if __name__ == "__main__":
     unittest.main()
