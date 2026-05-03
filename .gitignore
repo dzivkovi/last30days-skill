@@ -28,3 +28,7 @@ htmlcov/
 
 # Internal planning docs (ce:plan output) — keep local, don't publish
 docs/plans/
+
+/work
+/print
+
