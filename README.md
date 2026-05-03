@@ -229,6 +229,18 @@ These platforms don't have relationships with each other. X doesn't know what Re
 | Perplexity Sonar | OpenRouter key | Pay as you go |
 | Web search | Brave Search key | 2,000 free queries/month |
 
+See [CONFIGURATION.md](CONFIGURATION.md) for the full per-source key matrix, reasoning provider priority, and web-search backend priority.
+
+## Configuration
+
+Two things you'll likely want to know on day one:
+
+**Where research files are saved.** Default is `~/Documents/Last30Days/` (Windows: `C:\Users\<you>\Documents\Last30Days\`). Override with `LAST30DAYS_MEMORY_DIR=/path` in your shell, or `--save-dir <path>` per run. Use `--save-suffix=<name>` to keep multiple variations of the same topic separate (e.g. per client). Each run produces `<slug>-raw[-suffix].md`.
+
+**Trend monitoring across runs.** The default mode produces a fresh markdown snapshot per run. To accumulate findings over time, add `--store` to persist into a SQLite database, then use [`scripts/watchlist.py`](skills/last30days/scripts/watchlist.py) for scheduled runs (with optional Slack / webhook delivery on new findings) and [`scripts/briefing.py`](skills/last30days/scripts/briefing.py) for daily / weekly digests. The full cadence pattern is in [CONFIGURATION.md](CONFIGURATION.md#trend-monitoring-store--watchlist--briefings).
+
+Per-client wrapper scripts, custom category-peer subreddits, and the experimental beta channel for in-progress customizations are also documented in [CONFIGURATION.md](CONFIGURATION.md).
+
 ## How it works
 
 1. **You type a topic.** Person, company, product, technology, "X vs Y." Anything.
@@ -238,6 +250,8 @@ These platforms don't have relationships with each other. X doesn't know what Re
 5. **Same story, merged.** Wireless Festival announced on Reddit, discussed on X, ticket prices on TikTok = one cluster, not three separate items.
 6. **Synthesized into one brief.** Grounded in specific data. Cited by source. Ranked by what people actually engage with. Not "here's what I found." It's "here's what matters."
 7. **Then it becomes your expert.** After one run, your Claude session knows everything the community knows. Ask follow-up questions. Have it write prompts, draft emails, plan trips, architect systems - all grounded in what's real right now.
+
+> 📺 **Going deeper:** 6-min architecture walkthrough - [Real-time Social Listening across 10+ platforms: Under the Hood](https://youtu.be/SFejr5lJFxA).
 
 ## What people are saying
 
