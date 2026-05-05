@@ -17,6 +17,7 @@ This README tracks the current v3 pipeline. The runtime skill spec lives in [SKI
 Claude Code:
 ```
 /plugin marketplace add mvanhorn/last30days-skill
+/plugin install last30days
 ```
 
 OpenClaw:
@@ -170,7 +171,7 @@ Say "eli5 on" after any research run. The synthesis rewrites in plain language. 
 | Surface | Install |
 |---------|---------|
 | **claude.ai** (web) | [Download `last30days.skill`](https://github.com/mvanhorn/last30days-skill/releases/latest/download/last30days.skill) and upload via Settings > Capabilities > Skills > + |
-| **Claude Code** | `/plugin marketplace add mvanhorn/last30days-skill` |
+| **Claude Code** | `/plugin marketplace add mvanhorn/last30days-skill` then `/plugin install last30days` |
 | **OpenClaw** | `clawhub install last30days-official` |
 | **Gemini CLI** | Clone then `gemini extensions install ./last30days-skill` (see below) |
 
@@ -186,6 +187,7 @@ Enable "Code execution and file creation" under Capabilities first - skills won'
 
 ```
 /plugin marketplace add mvanhorn/last30days-skill
+/plugin install last30days
 ```
 
 Update later with `claude plugin update last30days@last30days-skill`.
