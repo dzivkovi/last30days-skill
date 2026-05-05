@@ -265,6 +265,45 @@ class TestSearchEndpointHostResolution(unittest.TestCase):
         self.assertIn("shell-host.example", url)
         self.assertNotIn("config-host.example", url)
 
+    def test_resolver_output_does_not_use_public_mirror(self):
+        # Regression guard at the resolver level (not just the constant) —
+        # this is what runtime actually calls. The constant-level guard
+        # above doesn't catch a regression where the resolver reverts.
+        self.assertNotIn("public.api.bsky.app", bluesky._resolve_search_url())
+
+    def test_resolver_strips_surrounding_whitespace(self):
+        # Pre-fix: " api.bsky.app " produced "https:// api.bsky.app /xrpc/..."
+        # which urllib raises ValueError on with no hint the env var caused it.
+        os.environ["BSKY_SEARCH_HOST"] = "  api.bsky.app  "
+        self.assertEqual(
+            bluesky._resolve_search_url(),
+            "https://api.bsky.app/xrpc/app.bsky.feed.searchPosts",
+        )
+
+    def test_resolver_rejects_embedded_path(self):
+        # "my-proxy.com/xrpc/prefix" would have doubled the /xrpc/ segment.
+        # We fall back to the default to avoid a guaranteed 404.
+        os.environ["BSKY_SEARCH_HOST"] = "my-proxy.example.com/xrpc/prefix"
+        self.assertEqual(
+            bluesky._resolve_search_url(),
+            "https://api.bsky.app/xrpc/app.bsky.feed.searchPosts",
+        )
+
+    def test_resolver_strips_embedded_scheme(self):
+        # Users who paste a full URL get a sane outcome, not a malformed URL.
+        os.environ["BSKY_SEARCH_HOST"] = "https://api.bsky.app"
+        self.assertEqual(
+            bluesky._resolve_search_url(),
+            "https://api.bsky.app/xrpc/app.bsky.feed.searchPosts",
+        )
+
+    def test_resolver_empty_string_falls_back_to_default(self):
+        os.environ["BSKY_SEARCH_HOST"] = ""
+        self.assertEqual(
+            bluesky._resolve_search_url(),
+            "https://api.bsky.app/xrpc/app.bsky.feed.searchPosts",
+        )
+
 
 class TestAppPasswordFormat(unittest.TestCase):
     """Bluesky app passwords are 19-char xxxx-xxxx-xxxx-xxxx (lowercase

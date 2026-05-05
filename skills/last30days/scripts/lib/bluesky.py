@@ -34,13 +34,34 @@ def _resolve_search_url(config: Optional[Dict[str, Any]] = None) -> str:
     .env file. The project's env.py loads .env into config but not into
     os.environ, so check both — same hybrid pattern as last30days.py for
     LAST30DAYS_STORE.
+
+    Hardens user-supplied host values against three common mis-configurations:
+    whitespace (e.g. " api.bsky.app "), embedded path components (e.g.
+    "api.bsky.app/xrpc/proxy") that would double the /xrpc/ segment, and
+    embedded scheme prefixes (e.g. "https://api.bsky.app"). On any of these
+    we log a warning and fall back to the default rather than building an
+    invalid URL with an opaque downstream error.
     """
     config = config or {}
-    host = (
+    raw = (
         os.environ.get("BSKY_SEARCH_HOST")
         or config.get("BSKY_SEARCH_HOST")
         or _DEFAULT_BSKY_SEARCH_HOST
     )
+    host = raw.strip().rstrip("/")
+    # Strip embedded scheme so users who paste full URLs do not break the f-string.
+    for prefix in ("https://", "http://"):
+        if host.lower().startswith(prefix):
+            host = host[len(prefix):]
+            break
+    if not host or "/" in host or " " in host:
+        # Embedded path or whitespace remains — don't trust it. Default + log.
+        if raw != _DEFAULT_BSKY_SEARCH_HOST:
+            _log(
+                f"BSKY_SEARCH_HOST={raw!r} is not a bare hostname; "
+                f"falling back to default {_DEFAULT_BSKY_SEARCH_HOST!r}"
+            )
+        host = _DEFAULT_BSKY_SEARCH_HOST
     return f"https://{host}/xrpc/app.bsky.feed.searchPosts"
 
 
@@ -189,6 +210,20 @@ def search_bluesky(
 
     if not handle or not app_password:
         return {"posts": [], "error": "Bluesky credentials not configured"}
+
+    # One-shot hygiene warning if BSKY_APP_PASSWORD is not in app-password
+    # form. createSession accepts main-account passwords too — but main
+    # passwords have no scope (full account access), can't be revoked
+    # individually, and rotating them breaks every service that holds them.
+    # We warn but do not gate, matching the project's detect-don't-block
+    # philosophy elsewhere.
+    if not _validate_app_password_format(app_password):
+        _log(
+            "BSKY_APP_PASSWORD does not look like an app password "
+            "(expected xxxx-xxxx-xxxx-xxxx, 19 chars). It may be a main "
+            "account password — those work but are bad hygiene. Generate "
+            "an app password at https://bsky.app/settings/app-passwords"
+        )
 
     count = DEPTH_CONFIG.get(depth, DEPTH_CONFIG["default"])
     core_topic = _extract_core_subject(topic)
