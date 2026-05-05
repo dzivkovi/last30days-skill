@@ -1,10 +1,19 @@
 """Bluesky search via AT Protocol (requires app password).
 
-Uses bsky.social for auth and public.api.bsky.app for post search.
-Requires BSKY_HANDLE and BSKY_APP_PASSWORD env vars.
+Uses bsky.social for auth and api.bsky.app for post search (the canonical
+authenticated AppView). The previous default `public.api.bsky.app` is the
+unauthenticated public mirror, which BunnyCDN now blocks for searchPosts
+regardless of auth header (verified 2026-05-04). Override the search host
+via BSKY_SEARCH_HOST env var if Bluesky migrates infrastructure again.
+
+Requires BSKY_HANDLE and BSKY_APP_PASSWORD env vars. App passwords are
+19-char xxxx-xxxx-xxxx-xxxx; generate at bsky.app/settings/app-passwords.
+The createSession endpoint accepts main-account passwords too, but they're
+bad hygiene (no scope, can't revoke individually).
 """
 
 import math
+import os
 import re
 import sys
 import time
@@ -14,7 +23,44 @@ from typing import Any, Dict, List, Optional
 from . import http, log
 
 BSKY_SESSION_URL = "https://bsky.social/xrpc/com.atproto.server.createSession"
-BSKY_SEARCH_URL = "https://public.api.bsky.app/xrpc/app.bsky.feed.searchPosts"
+_DEFAULT_BSKY_SEARCH_HOST = "api.bsky.app"
+BSKY_SEARCH_URL = f"https://{_DEFAULT_BSKY_SEARCH_HOST}/xrpc/app.bsky.feed.searchPosts"
+
+
+def _resolve_search_url(config: Optional[Dict[str, Any]] = None) -> str:
+    """Resolve the Bluesky search URL with BSKY_SEARCH_HOST override.
+
+    Default is api.bsky.app. Override via BSKY_SEARCH_HOST in shell env or
+    .env file. The project's env.py loads .env into config but not into
+    os.environ, so check both — same hybrid pattern as last30days.py for
+    LAST30DAYS_STORE.
+    """
+    config = config or {}
+    host = (
+        os.environ.get("BSKY_SEARCH_HOST")
+        or config.get("BSKY_SEARCH_HOST")
+        or _DEFAULT_BSKY_SEARCH_HOST
+    )
+    return f"https://{host}/xrpc/app.bsky.feed.searchPosts"
+
+
+# App-password format: xxxx-xxxx-xxxx-xxxx (19 chars, lowercase alphanumeric
+# with three hyphens at fixed positions).
+_APP_PASSWORD_RE = re.compile(r"^[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{4}$")
+
+
+def _validate_app_password_format(value) -> bool:
+    """Return True if value matches Bluesky's 19-char app-password format.
+
+    False for non-strings (None, int, list) so callers passing config dict
+    values directly don't crash. Detect-but-not-gate: the createSession
+    endpoint also accepts main-account passwords, so failing this check is
+    a hygiene smell, not a hard error.
+    """
+    if not isinstance(value, str):
+        return False
+    return bool(_APP_PASSWORD_RE.fullmatch(value))
+
 
 DEPTH_CONFIG = {
     "quick": 15,
@@ -155,7 +201,7 @@ def search_bluesky(
         "limit": str(min(count, 100)),
         "sort": "top",
     }
-    url = f"{BSKY_SEARCH_URL}?{urlencode(params)}"
+    url = f"{_resolve_search_url(config)}?{urlencode(params)}"
 
     def _auth_and_search() -> tuple[Optional[Dict[str, Any]], Optional[str]]:
         token = _create_session(handle, app_password)
