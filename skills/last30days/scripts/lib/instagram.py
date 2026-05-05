@@ -354,7 +354,7 @@ def search_instagram(
         except http.HTTPError as e:
             # SC's v2 reels search is documented-flaky on multi-token queries
             # because it wraps Google Search. Retry once with hashtag form.
-            if getattr(e, "status", None) == 500 and ' ' in core_topic:
+            if getattr(e, "status_code", None) == 500 and ' ' in core_topic:
                 _log(f"IG search 500 on '{core_topic}', retrying with hashtag form")
                 try:
                     params = urlencode({"query": _to_hashtag_form(core_topic)})

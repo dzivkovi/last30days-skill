@@ -258,5 +258,52 @@ class TestTranscriptTimeoutConfig(unittest.TestCase):
             self.assertEqual(kwargs["timeout"], 30.0)
 
 
+class TestSearchRetryOn500Urllib(unittest.TestCase):
+    """Lock in the urllib-path 500-retry. Pre-fix the retry was dead code on
+    the urllib branch because it checked `getattr(e, 'status', None)` while
+    `http.HTTPError` exposes the code as `status_code`. Caught by code-review
+    on 2026-05-04 (REL-001 / ADV-001, two reviewers at 0.97/0.98 confidence).
+    """
+
+    def setUp(self):
+        # Force urllib path by making instagram._requests look absent
+        self._saved_requests = instagram._requests
+        instagram._requests = None
+
+    def tearDown(self):
+        instagram._requests = self._saved_requests
+
+    def test_urllib_500_on_multiword_triggers_retry_with_hashtag_form(self):
+        from lib import http as http_module
+        first_error = http_module.HTTPError("HTTP 500: Server Error", 500, "")
+        second_payload = {"reels": []}
+        # http.get is called twice: first raises HTTPError(500), second returns dict
+        with patch.object(http_module, "get") as mock_http_get:
+            mock_http_get.side_effect = [first_error, second_payload]
+            instagram.search_instagram(
+                "toronto real estate", "2026-04-01", "2026-05-04",
+                depth="default", token="fake-token",
+            )
+            self.assertEqual(mock_http_get.call_count, 2)
+            # First call URL contains the original multi-word query
+            first_url = mock_http_get.call_args_list[0].args[0]
+            self.assertIn("query=toronto+real+estate", first_url)
+            # Second call URL contains the collapsed hashtag form
+            second_url = mock_http_get.call_args_list[1].args[0]
+            self.assertIn("query=torontorealestate", second_url)
+
+    def test_urllib_500_on_singleword_does_not_retry(self):
+        from lib import http as http_module
+        only_error = http_module.HTTPError("HTTP 500: Server Error", 500, "")
+        with patch.object(http_module, "get") as mock_http_get:
+            mock_http_get.side_effect = only_error
+            result = instagram.search_instagram(
+                "ozempic", "2026-04-01", "2026-05-04",
+                depth="default", token="fake-token",
+            )
+            self.assertEqual(mock_http_get.call_count, 1)
+            self.assertIn("error", result)
+
+
 if __name__ == "__main__":
     unittest.main()
