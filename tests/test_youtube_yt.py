@@ -251,7 +251,7 @@ class TestFetchTranscriptFallback(unittest.TestCase):
              mock.patch.object(youtube_yt, "_fetch_transcript_direct", return_value=sample_vtt) as direct_mock:
             result = youtube_yt.fetch_transcript("vid2", "/tmp/test")
         yt_mock.assert_not_called()
-        direct_mock.assert_called_once_with("vid2")
+        direct_mock.assert_called_once_with("vid2", status=None)
         self.assertIsNotNone(result)
         self.assertIn("Direct transcript content", result)
 
@@ -362,7 +362,7 @@ class TestSearchAndTranscribe(unittest.TestCase):
         ]
 
         # fetch_transcripts_parallel returns None for music videos, text for talks
-        def fake_parallel(video_ids, max_workers=5):
+        def fake_parallel(video_ids, max_workers=5, out_captions_disabled=None):
             result = {}
             for vid in video_ids:
                 if vid.startswith("talk"):

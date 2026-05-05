@@ -7,6 +7,7 @@ Requires SCRAPECREATORS_API_KEY in config. 100 free API calls, then PAYG.
 API docs: https://scrapecreators.com/docs
 """
 
+import os
 import re
 import sys
 from datetime import datetime
@@ -31,6 +32,43 @@ DEPTH_CONFIG = {
 # Max words to keep from each caption
 CAPTION_MAX_WORDS = 500
 
+# Default transcript fetch timeout (seconds). SC's
+# /v2/instagram/media/transcript regularly takes >15s on real workloads,
+# so the default is generous; override via LAST30DAYS_TRANSCRIPT_TIMEOUT.
+DEFAULT_TRANSCRIPT_TIMEOUT = 30
+
+
+def _resolve_transcript_timeout(
+    timeout: Optional[float] = None,
+    config: Optional[Dict[str, Any]] = None,
+) -> float:
+    """Resolve the IG transcript-fetch timeout.
+
+    Priority (highest wins):
+      1. Explicit ``timeout`` kwarg
+      2. ``LAST30DAYS_TRANSCRIPT_TIMEOUT`` in os.environ
+      3. ``LAST30DAYS_TRANSCRIPT_TIMEOUT`` in caller-supplied config dict
+      4. ``DEFAULT_TRANSCRIPT_TIMEOUT`` (30s)
+
+    Mirrors the ``os.environ.get(X) or config.get(X)`` pattern used for
+    LAST30DAYS_STORE in last30days.py so the env var works whether it's
+    shell-exported or set in ~/.config/last30days/.env.
+    """
+    if timeout is not None:
+        try:
+            return float(timeout)
+        except (TypeError, ValueError):
+            pass
+    raw = os.environ.get("LAST30DAYS_TRANSCRIPT_TIMEOUT")
+    if not raw and config:
+        raw = config.get("LAST30DAYS_TRANSCRIPT_TIMEOUT")
+    if raw:
+        try:
+            return float(raw)
+        except (TypeError, ValueError):
+            pass
+    return float(DEFAULT_TRANSCRIPT_TIMEOUT)
+
 from .relevance import token_overlap_relevance as _compute_relevance
 
 
@@ -47,6 +85,17 @@ def _extract_core_subject(topic: str) -> str:
         'methods', 'strategies', 'approaches',
     })
     return extract_core_subject(topic, noise=_INSTAGRAM_NOISE)
+
+
+def _to_hashtag_form(query: str) -> str:
+    """Collapse a multi-word query to hashtag form (no spaces, lowercase).
+
+    SC's /v2/instagram/reels/search wraps Google Search and is documented
+    to be flaky on multi-token queries. Single-token queries map to a
+    hashtag page lookup which is the stable path. Used as a 500-retry
+    fallback before the request bubbles up as a silent failure.
+    """
+    return ''.join(query.split()).lower()
 
 
 def _infer_query_intent(topic: str) -> str:
@@ -302,6 +351,21 @@ def search_instagram(
             headers = http.scrapecreators_headers(token)
             headers["User-Agent"] = http.USER_AGENT
             data = http.get(url, headers=headers, timeout=30, retries=2)
+        except http.HTTPError as e:
+            # SC's v2 reels search is documented-flaky on multi-token queries
+            # because it wraps Google Search. Retry once with hashtag form.
+            if getattr(e, "status", None) == 500 and ' ' in core_topic:
+                _log(f"IG search 500 on '{core_topic}', retrying with hashtag form")
+                try:
+                    params = urlencode({"query": _to_hashtag_form(core_topic)})
+                    url = f"{SCRAPECREATORS_BASE}/v2/instagram/reels/search?{params}"
+                    data = http.get(url, headers=headers, timeout=30, retries=2)
+                except Exception as retry_e:
+                    _log(f"IG search retry failed: {retry_e}")
+                    return {"items": [], "error": f"{type(retry_e).__name__}: {retry_e}"}
+            else:
+                _log(f"ScrapeCreators error (urllib): {e}")
+                return {"items": [], "error": f"{type(e).__name__}: {e}"}
         except Exception as e:
             _log(f"ScrapeCreators error (urllib): {e}")
             return {"items": [], "error": f"{type(e).__name__}: {e}"}
@@ -313,6 +377,17 @@ def search_instagram(
                 headers=http.scrapecreators_headers(token),
                 timeout=30,
             )
+            # SC's v2 reels search wraps Google Search and 500's frequently on
+            # multi-token queries. Single tokens hit the stable hashtag-page
+            # path. Retry once with hashtag form before bubbling up.
+            if resp.status_code == 500 and ' ' in core_topic:
+                _log(f"IG search 500 on '{core_topic}', retrying with hashtag form")
+                resp = _requests.get(
+                    f"{SCRAPECREATORS_BASE}/v2/instagram/reels/search",
+                    params={"query": _to_hashtag_form(core_topic)},
+                    headers=http.scrapecreators_headers(token),
+                    timeout=30,
+                )
             resp.raise_for_status()
             data = resp.json()
         except Exception as e:
@@ -349,6 +424,8 @@ def fetch_captions(
     video_items: List[Dict[str, Any]],
     token: str,
     depth: str = "default",
+    timeout: Optional[float] = None,
+    config: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, str]:
     """Fetch transcripts for top N Instagram reels via ScrapeCreators.
 
@@ -360,12 +437,19 @@ def fetch_captions(
         video_items: Items from search_instagram()
         token: ScrapeCreators API key
         depth: Depth level for caption limit
+        timeout: Optional per-request transcript timeout in seconds. When
+            None, resolves from LAST30DAYS_TRANSCRIPT_TIMEOUT (env or
+            config), defaulting to DEFAULT_TRANSCRIPT_TIMEOUT (30s).
+        config: Optional config dict (from env.get_config()) used as a
+            fallback source for LAST30DAYS_TRANSCRIPT_TIMEOUT when the
+            value is not exported in os.environ.
 
     Returns:
         Dict mapping video_id -> caption text (truncated to 500 words)
     """
-    config = DEPTH_CONFIG.get(depth, DEPTH_CONFIG["default"])
-    max_captions = config["max_captions"]
+    depth_cfg = DEPTH_CONFIG.get(depth, DEPTH_CONFIG["default"])
+    max_captions = depth_cfg["max_captions"]
+    transcript_timeout = _resolve_transcript_timeout(timeout, config)
 
     if not video_items or not token or not _requests:
         return {}
@@ -396,7 +480,7 @@ def fetch_captions(
                 f"{SCRAPECREATORS_BASE}/v2/instagram/media/transcript",
                 params={"url": url},
                 headers=http.scrapecreators_headers(token),
-                timeout=15,
+                timeout=transcript_timeout,
             )
             if resp.status_code == 200:
                 data = resp.json()

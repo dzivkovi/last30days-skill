@@ -293,3 +293,85 @@ class TestYouTubeDegraded:
         # But nudge still fires
         assert q["nudge_text"] is not None
         assert "Degraded: YouTube" in q["nudge_text"]
+
+
+class TestYouTubeCaptionsDisabledDoesNotFalseFlag:
+    """Captions-disabled videos must not lower the transcript-fetch ratio.
+
+    A video where the uploader disabled captions can never produce a transcript,
+    no matter how fresh yt-dlp is. Counting it in the denominator of the
+    degraded-ratio check produces false positives - one captions-disabled video
+    in a small result set was triggering a "stale yt-dlp binary" nudge that was
+    wrong. Fix: subtract captions_disabled from the denominator.
+    """
+
+    def test_zero_captions_disabled_preserves_existing_behavior(self):
+        # Pre-existing case: 0 of 6 transcripts is still degraded (no captions
+        # disabled to discount). Behavior is unchanged from TestYouTubeDegraded.
+        q = _compute(
+            ytdlp_installed=True,
+            result_overrides={
+                "youtube_videos_count": 6,
+                "youtube_transcripts_count": 0,
+                "youtube_captions_disabled_count": 0,
+            },
+        )
+        assert "youtube" in q["core_degraded"]
+
+    def test_all_videos_captions_disabled_does_not_flag(self):
+        # Every returned video had captions disabled by the uploader.
+        # That's not a yt-dlp problem - it's an upstream content fact. Must not
+        # flag degraded.
+        q = _compute(
+            ytdlp_installed=True,
+            result_overrides={
+                "youtube_videos_count": 3,
+                "youtube_transcripts_count": 0,
+                "youtube_captions_disabled_count": 3,
+            },
+        )
+        assert "youtube" not in q["core_degraded"]
+
+    def test_mixed_uses_corrected_denominator(self):
+        # 6 videos, 3 captions_disabled, 2 transcripts.
+        # Naive (buggy) ratio: 2/6 = 33% (would flag).
+        # Corrected ratio: 2/(6-3) = 67% (does NOT flag).
+        # This case demonstrates the fix changes the verdict.
+        q = _compute(
+            ytdlp_installed=True,
+            result_overrides={
+                "youtube_videos_count": 6,
+                "youtube_transcripts_count": 2,
+                "youtube_captions_disabled_count": 3,
+            },
+        )
+        assert "youtube" not in q["core_degraded"]
+
+    def test_mixed_still_flags_when_truly_degraded(self):
+        # Even after discounting captions-disabled, the ratio is still bad.
+        # 8 videos, 1 captions_disabled, 1 transcript -> 1/(8-1) = 14% (flags).
+        q = _compute(
+            ytdlp_installed=True,
+            result_overrides={
+                "youtube_videos_count": 8,
+                "youtube_transcripts_count": 1,
+                "youtube_captions_disabled_count": 1,
+            },
+        )
+        assert "youtube" in q["core_degraded"]
+        # Nudge should still mention the stale yt-dlp possibility but also
+        # acknowledge that captions-disabled is a separate cause.
+        assert q["nudge_text"] is not None
+        assert "captions disabled" in q["nudge_text"].lower()
+
+    def test_missing_count_defaults_to_zero(self):
+        # Older callers that don't pass the new key still work (default 0).
+        q = _compute(
+            ytdlp_installed=True,
+            result_overrides={
+                "youtube_videos_count": 6,
+                "youtube_transcripts_count": 0,
+                # youtube_captions_disabled_count intentionally omitted
+            },
+        )
+        assert "youtube" in q["core_degraded"]

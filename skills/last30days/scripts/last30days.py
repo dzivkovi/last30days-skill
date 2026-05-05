@@ -875,6 +875,13 @@ def main() -> int:
                 1 for it in youtube_items
                 if (it.metadata.get("transcript_highlights") or it.metadata.get("transcript_snippet"))
             ),
+            # Captions-disabled videos can never produce a transcript regardless
+            # of yt-dlp version; subtract them from the degraded-ratio
+            # denominator so a single uploader-disabled video does not trip the
+            # "stale yt-dlp" nudge.
+            "youtube_captions_disabled_count": sum(
+                1 for it in youtube_items if it.metadata.get("captions_disabled")
+            ),
         }
         quality = quality_nudge.compute_quality_score(config, research_results)
         if quality.get("nudge_text"):

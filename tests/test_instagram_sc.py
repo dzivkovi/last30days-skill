@@ -1,8 +1,10 @@
 """Tests for instagram.py — ScrapeCreators Instagram search module."""
 
+import os
 import sys
 import unittest
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 # Add lib to path
 sys.path.insert(0, str(Path(__file__).parent.parent / "skills" / "last30days" / "scripts"))
@@ -83,6 +85,177 @@ class TestInstagramDepthConfig(unittest.TestCase):
             instagram.DEPTH_CONFIG["deep"]["results_per_page"],
             instagram.DEPTH_CONFIG["quick"]["results_per_page"],
         )
+
+
+class TestHashtagFormCollapse(unittest.TestCase):
+    """Tests for _to_hashtag_form() — the multi-word retry workaround."""
+
+    def test_collapses_spaces(self):
+        self.assertEqual(instagram._to_hashtag_form("toronto real estate"), "torontorealestate")
+
+    def test_lowercases(self):
+        self.assertEqual(instagram._to_hashtag_form("Toronto REAL Estate"), "torontorealestate")
+
+    def test_idempotent_on_single_word(self):
+        self.assertEqual(instagram._to_hashtag_form("ozempic"), "ozempic")
+
+    def test_handles_extra_whitespace(self):
+        self.assertEqual(instagram._to_hashtag_form("  toronto   real  estate  "), "torontorealestate")
+
+
+class TestSearchRetryOn500(unittest.TestCase):
+    """Tests for the multi-word -> hashtag retry on SC's flaky 500 path.
+
+    SC's /v2/instagram/reels/search wraps Google Search and is documented
+    to be unreliable on multi-token queries. The retry collapses to a
+    hashtag form which hits the stable hashtag-page lookup path.
+    """
+
+    def _mock_response(self, status_code, json_payload=None):
+        m = MagicMock()
+        m.status_code = status_code
+        m.json.return_value = json_payload or {}
+        if status_code >= 400:
+            m.raise_for_status.side_effect = Exception(f"HTTP {status_code}")
+        else:
+            m.raise_for_status.return_value = None
+        return m
+
+    def test_multiword_500_triggers_retry_with_hashtag_form(self):
+        """Multi-word query 500 -> retry with collapsed hashtag form."""
+        first = self._mock_response(500)
+        second = self._mock_response(200, {"reels": []})
+        with patch.object(instagram, "_requests") as mock_requests:
+            mock_requests.get.side_effect = [first, second]
+            instagram.search_instagram(
+                "toronto real estate", "2026-04-01", "2026-05-04",
+                depth="default", token="fake-token",
+            )
+            self.assertEqual(mock_requests.get.call_count, 2)
+            # First call: original multi-word query
+            first_params = mock_requests.get.call_args_list[0].kwargs["params"]
+            self.assertEqual(first_params["query"], "toronto real estate")
+            # Second call: collapsed hashtag form
+            second_params = mock_requests.get.call_args_list[1].kwargs["params"]
+            self.assertEqual(second_params["query"], "torontorealestate")
+
+    def test_singleword_500_does_not_retry(self):
+        """Single-word query 500 has no spaces to collapse - no retry."""
+        only = self._mock_response(500)
+        with patch.object(instagram, "_requests") as mock_requests:
+            mock_requests.get.return_value = only
+            result = instagram.search_instagram(
+                "ozempic", "2026-04-01", "2026-05-04",
+                depth="default", token="fake-token",
+            )
+            self.assertEqual(mock_requests.get.call_count, 1)
+            self.assertIn("error", result)
+            self.assertEqual(result["items"], [])
+
+    def test_first_call_succeeds_no_retry(self):
+        """200 on first call -> retry path is never entered."""
+        ok = self._mock_response(200, {"reels": []})
+        with patch.object(instagram, "_requests") as mock_requests:
+            mock_requests.get.return_value = ok
+            instagram.search_instagram(
+                "toronto real estate", "2026-04-01", "2026-05-04",
+                depth="default", token="fake-token",
+            )
+            self.assertEqual(mock_requests.get.call_count, 1)
+
+    def test_no_token_short_circuits(self):
+        """No SCRAPECREATORS_API_KEY -> error returned without HTTP call."""
+        with patch.object(instagram, "_requests") as mock_requests:
+            result = instagram.search_instagram(
+                "toronto real estate", "2026-04-01", "2026-05-04",
+                depth="default", token=None,
+            )
+            mock_requests.get.assert_not_called()
+            self.assertIn("error", result)
+            self.assertIn("SCRAPECREATORS_API_KEY", result["error"])
+
+
+class TestTranscriptTimeoutConfig(unittest.TestCase):
+    """Tests for LAST30DAYS_TRANSCRIPT_TIMEOUT configuration.
+
+    SC's /v2/instagram/media/transcript endpoint regularly takes >15s,
+    so the timeout must be configurable. Default is DEFAULT_TRANSCRIPT_TIMEOUT
+    (30s); the env var or per-call kwarg overrides it.
+    """
+
+    def setUp(self):
+        # Snapshot any pre-existing env so we don't leak across tests
+        self._saved_env = os.environ.pop("LAST30DAYS_TRANSCRIPT_TIMEOUT", None)
+
+    def tearDown(self):
+        os.environ.pop("LAST30DAYS_TRANSCRIPT_TIMEOUT", None)
+        if self._saved_env is not None:
+            os.environ["LAST30DAYS_TRANSCRIPT_TIMEOUT"] = self._saved_env
+
+    def _ok_response(self):
+        m = MagicMock()
+        m.status_code = 200
+        m.json.return_value = {"transcripts": [{"text": "hello world"}]}
+        return m
+
+    def _video_item(self, vid="abc123"):
+        return {
+            "video_id": vid,
+            "url": f"https://www.instagram.com/reel/{vid}/",
+            "text": "",
+        }
+
+    def test_default_timeout_is_30s_when_nothing_set(self):
+        """No env var, no kwarg -> request uses 30s, not the legacy 15s."""
+        items = [self._video_item()]
+        with patch.object(instagram, "_requests") as mock_requests:
+            mock_requests.get.return_value = self._ok_response()
+            instagram.fetch_captions(items, token="fake-token")
+            kwargs = mock_requests.get.call_args.kwargs
+            self.assertEqual(kwargs["timeout"], 30.0)
+
+    def test_env_var_override(self):
+        """LAST30DAYS_TRANSCRIPT_TIMEOUT='60' -> request uses 60s."""
+        os.environ["LAST30DAYS_TRANSCRIPT_TIMEOUT"] = "60"
+        items = [self._video_item()]
+        with patch.object(instagram, "_requests") as mock_requests:
+            mock_requests.get.return_value = self._ok_response()
+            instagram.fetch_captions(items, token="fake-token")
+            kwargs = mock_requests.get.call_args.kwargs
+            self.assertEqual(kwargs["timeout"], 60.0)
+
+    def test_explicit_timeout_kwarg_wins_over_env(self):
+        """Explicit timeout= kwarg trumps the env var."""
+        os.environ["LAST30DAYS_TRANSCRIPT_TIMEOUT"] = "60"
+        items = [self._video_item()]
+        with patch.object(instagram, "_requests") as mock_requests:
+            mock_requests.get.return_value = self._ok_response()
+            instagram.fetch_captions(items, token="fake-token", timeout=10)
+            kwargs = mock_requests.get.call_args.kwargs
+            self.assertEqual(kwargs["timeout"], 10.0)
+
+    def test_config_dict_fallback_when_env_unset(self):
+        """config={'LAST30DAYS_TRANSCRIPT_TIMEOUT': '45'} -> request uses 45s."""
+        items = [self._video_item()]
+        with patch.object(instagram, "_requests") as mock_requests:
+            mock_requests.get.return_value = self._ok_response()
+            instagram.fetch_captions(
+                items,
+                token="fake-token",
+                config={"LAST30DAYS_TRANSCRIPT_TIMEOUT": "45"},
+            )
+            kwargs = mock_requests.get.call_args.kwargs
+            self.assertEqual(kwargs["timeout"], 45.0)
+
+    def test_invalid_env_value_falls_back_to_default(self):
+        """Garbage env var doesn't crash; falls back to 30s."""
+        os.environ["LAST30DAYS_TRANSCRIPT_TIMEOUT"] = "not-a-number"
+        items = [self._video_item()]
+        with patch.object(instagram, "_requests") as mock_requests:
+            mock_requests.get.return_value = self._ok_response()
+            instagram.fetch_captions(items, token="fake-token")
+            kwargs = mock_requests.get.call_args.kwargs
+            self.assertEqual(kwargs["timeout"], 30.0)
 
 
 if __name__ == "__main__":

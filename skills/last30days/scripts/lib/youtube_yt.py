@@ -316,7 +316,11 @@ def _clean_vtt(vtt_text: str) -> str:
 _YT_USER_AGENT = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
 
 
-def _fetch_transcript_direct(video_id: str, timeout: int = 30) -> Optional[str]:
+def _fetch_transcript_direct(
+    video_id: str,
+    timeout: int = 30,
+    status: Optional[Dict[str, Any]] = None,
+) -> Optional[str]:
     """Fetch YouTube transcript via direct HTTP without yt-dlp.
 
     Scrapes the watch page HTML for the captions track URL in
@@ -325,6 +329,9 @@ def _fetch_transcript_direct(video_id: str, timeout: int = 30) -> Optional[str]:
     Args:
         video_id: YouTube video ID
         timeout: HTTP request timeout in seconds
+        status: Optional dict mutated to record per-video signals. Sets
+            ``status["no_caption_tracks"] = True`` when the player response
+            confirms the uploader has no caption tracks (vs. fetch failure).
 
     Returns:
         Raw VTT text, or None if captions are unavailable.
@@ -373,6 +380,8 @@ def _fetch_transcript_direct(video_id: str, timeout: int = 30) -> Optional[str]:
 
     if not caption_tracks:
         _log(f"Direct transcript: no caption tracks for {video_id}")
+        if status is not None:
+            status["no_caption_tracks"] = True
         return None
 
     # Find English track (prefer exact 'en', then any en variant, then first track)
@@ -458,7 +467,11 @@ def _fetch_transcript_ytdlp(video_id: str, temp_dir: str) -> Optional[str]:
         return None
 
 
-def fetch_transcript(video_id: str, temp_dir: str) -> Optional[str]:
+def fetch_transcript(
+    video_id: str,
+    temp_dir: str,
+    status: Optional[Dict[str, Any]] = None,
+) -> Optional[str]:
     """Fetch auto-generated transcript for a YouTube video.
 
     Uses yt-dlp when available (preferred, more robust). Falls back to
@@ -467,6 +480,10 @@ def fetch_transcript(video_id: str, temp_dir: str) -> Optional[str]:
     Args:
         video_id: YouTube video ID
         temp_dir: Temporary directory for subtitle files
+        status: Optional dict mutated by the direct-HTTP path to record
+            per-video signals like ``no_caption_tracks``. Used to surface a
+            captions-disabled count so the quality nudge avoids false-positive
+            "stale yt-dlp" flags.
 
     Returns:
         Plaintext transcript string, or None if no captions available.
@@ -476,10 +493,10 @@ def fetch_transcript(video_id: str, temp_dir: str) -> Optional[str]:
         raw_vtt = _fetch_transcript_ytdlp(video_id, temp_dir)
         if not raw_vtt:
             _log(f"yt-dlp transcript failed for {video_id}, trying direct HTTP fallback")
-            raw_vtt = _fetch_transcript_direct(video_id)
+            raw_vtt = _fetch_transcript_direct(video_id, status=status)
     else:
         _log("yt-dlp not installed, using direct HTTP transcript fetch")
-        raw_vtt = _fetch_transcript_direct(video_id)
+        raw_vtt = _fetch_transcript_direct(video_id, status=status)
 
     if not raw_vtt:
         _log(f"No transcript available for {video_id} (no captions found)")
@@ -498,12 +515,16 @@ def fetch_transcript(video_id: str, temp_dir: str) -> Optional[str]:
 def fetch_transcripts_parallel(
     video_ids: List[str],
     max_workers: int = 5,
+    out_captions_disabled: Optional[Set[str]] = None,
 ) -> Dict[str, Optional[str]]:
     """Fetch transcripts for multiple videos in parallel.
 
     Args:
         video_ids: List of YouTube video IDs
         max_workers: Max parallel fetches
+        out_captions_disabled: Optional set mutated to record video_ids whose
+            uploader confirmed no caption tracks (vs. transient fetch failures).
+            Backward-compatible: callers that don't care can omit.
 
     Returns:
         Dict mapping video_id to transcript text (or None).
@@ -514,10 +535,11 @@ def fetch_transcripts_parallel(
     _log(f"Fetching transcripts for {len(video_ids)} videos")
 
     results = {}
+    statuses: Dict[str, Dict[str, Any]] = {vid: {} for vid in video_ids}
     with tempfile.TemporaryDirectory() as temp_dir:
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             futures = {
-                executor.submit(fetch_transcript, vid, temp_dir): vid
+                executor.submit(fetch_transcript, vid, temp_dir, statuses[vid]): vid
                 for vid in video_ids
             }
             for future in as_completed(futures):
@@ -530,6 +552,11 @@ def fetch_transcripts_parallel(
                 except Exception as exc:
                     _log(f"Unexpected transcript error for {vid}: {type(exc).__name__}: {exc}")
                     results[vid] = None
+
+    if out_captions_disabled is not None:
+        for vid, st in statuses.items():
+            if st.get("no_caption_tracks"):
+                out_captions_disabled.add(vid)
 
     got = sum(1 for v in results.values() if v)
     errors = sum(1 for v in results.values() if v is None)
@@ -581,15 +608,21 @@ def search_and_transcribe(
     # good chance of reaching the target number of successful transcripts.
     transcript_limit = TRANSCRIPT_LIMITS.get(depth, TRANSCRIPT_LIMITS["default"])
     transcripts: Dict[str, Optional[str]] = {}
+    captions_disabled_ids: Set[str] = set()
     if transcript_limit > 0:
         attempt_count = min(len(items), transcript_limit * 3)
         candidate_ids = [item["video_id"] for item in items[:attempt_count]]
         _log(f"Fetching transcripts for up to {attempt_count} videos (target: {transcript_limit}): {candidate_ids}")
-        transcripts = fetch_transcripts_parallel(candidate_ids)
+        transcripts = fetch_transcripts_parallel(
+            candidate_ids, out_captions_disabled=captions_disabled_ids,
+        )
     else:
         _log(f"Transcript limit is 0 for depth={depth}, skipping transcript fetch")
 
-    # Step 3: Attach transcripts and extract highlights
+    # Step 3: Attach transcripts and extract highlights. Mark captions_disabled
+    # so quality_nudge can subtract those videos from the degraded-ratio
+    # denominator (uploader-disabled captions can never produce a transcript;
+    # counting them was producing false-positive stale-yt-dlp nudges).
     core_topic = _extract_core_subject(topic)
     for item in items:
         vid = item["video_id"]
@@ -598,6 +631,7 @@ def search_and_transcribe(
         item["transcript_highlights"] = extract_transcript_highlights(
             transcript or "", core_topic,
         )
+        item["captions_disabled"] = vid in captions_disabled_ids
 
     return {"items": items}
 

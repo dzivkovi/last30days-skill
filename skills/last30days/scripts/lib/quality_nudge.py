@@ -58,12 +58,23 @@ def _is_youtube_degraded(research_results: dict, threshold: float) -> bool:
     ratio is below threshold. The canonical cause is a stale yt-dlp binary -
     YouTube's caption format changes frequently and old binaries silently fail
     every transcript while the search itself still succeeds.
+
+    Captions-disabled videos are subtracted from the denominator: an uploader
+    who turned off captions can never produce a transcript, so counting that
+    video toward "fetch failures" produces false positives. A single
+    captions-disabled video in a small result set was tripping the nudge.
     """
     videos = int(research_results.get("youtube_videos_count") or 0)
     transcripts = int(research_results.get("youtube_transcripts_count") or 0)
+    captions_disabled = int(research_results.get("youtube_captions_disabled_count") or 0)
     if videos <= 0:
         return False
-    return (transcripts / videos) < threshold
+    eligible = videos - captions_disabled
+    if eligible <= 0:
+        # Every returned video had captions disabled - upstream content fact,
+        # not a yt-dlp problem. Don't flag.
+        return False
+    return (transcripts / eligible) < threshold
 
 
 def compute_quality_score(config: dict, research_results: dict) -> dict:
@@ -215,12 +226,20 @@ def _build_nudge_text(
     if "youtube" in core_degraded:
         videos = int(research_results.get("youtube_videos_count") or 0)
         transcripts = int(research_results.get("youtube_transcripts_count") or 0)
+        captions_disabled = int(research_results.get("youtube_captions_disabled_count") or 0)
+        captions_note = ""
+        if captions_disabled > 0:
+            captions_note = (
+                f" ({captions_disabled} of those had captions disabled by the "
+                "uploader, which is a separate cause and not fixable on your end)"
+            )
         free_suggestions.append(
             f"YouTube returned {videos} videos but only {transcripts} transcripts "
-            "captured. The most common cause is a stale yt-dlp binary - YouTube's "
-            "caption format changes frequently and old binaries silently fail every "
-            "transcript. Update via your package manager: scoop update yt-dlp "
-            "(Windows), brew upgrade yt-dlp (macOS), or pip install -U yt-dlp."
+            f"captured{captions_note}. The most common remaining cause is a stale "
+            "yt-dlp binary - YouTube's caption format changes frequently and old "
+            "binaries silently fail every transcript. Update via your package "
+            "manager: scoop update yt-dlp (Windows), brew upgrade yt-dlp (macOS), "
+            "or pip install -U yt-dlp."
         )
 
     # Mention bonus opt-in sources when SC key is present
