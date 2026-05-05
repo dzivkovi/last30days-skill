@@ -855,7 +855,17 @@ def main() -> int:
         report, progress, diag,
         suppress_web_promo=bool(external_plan or comp_plan),
     )
-    if args.store:
+    # LAST30DAYS_STORE env var = persistence default-on. Read both os.environ
+    # (for shell-exported users) and config (for users who set it in
+    # ~/.config/last30days/.env, which env.py loads but does not propagate
+    # to os.environ). Mirrors the LAST30DAYS_DEBUG / LAST30DAYS_SKIP_PREFLIGHT
+    # convention; env-var or config wins, with `--store` flag still working.
+    _store_env = (
+        os.environ.get("LAST30DAYS_STORE")
+        or config.get("LAST30DAYS_STORE")
+        or ""
+    ).lower()
+    if args.store or _store_env in ("1", "true", "yes"):
         counts = persist_report(report)
         sys.stderr.write(
             f"[last30days] Stored {counts['new']} new, {counts['updated']} updated findings\n"
