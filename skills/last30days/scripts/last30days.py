@@ -879,6 +879,7 @@ def main() -> int:
         # degraded-YouTube failure mode (videos returned but transcripts
         # silently failed - typically a stale yt-dlp binary).
         youtube_items = report.items_by_source.get("youtube") or []
+        instagram_items = report.items_by_source.get("instagram") or []
         research_results = {
             "youtube_videos_count": len(youtube_items),
             "youtube_transcripts_count": sum(
@@ -892,6 +893,10 @@ def main() -> int:
             "youtube_captions_disabled_count": sum(
                 1 for it in youtube_items if it.metadata.get("captions_disabled")
             ),
+            # Track Instagram returned-zero-items so quality_nudge can detect
+            # the silent-failure case (SC configured but the v2 reels endpoint
+            # 500'd through both the original query and the hashtag retry).
+            "instagram_items_count": len(instagram_items),
         }
         quality = quality_nudge.compute_quality_score(config, research_results)
         if quality.get("nudge_text"):

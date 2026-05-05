@@ -375,3 +375,92 @@ class TestYouTubeCaptionsDisabledDoesNotFalseFlag:
             },
         )
         assert "youtube" in q["core_degraded"]
+
+
+class TestInstagramSilentFailure:
+    """Instagram is a `bonus` source via SC. Silent-failure detection: if SC
+    is configured but the source returned zero items, surface a nudge so the
+    user understands why the brief lacks an Instagram section.
+
+    Pre-fix the user got no signal - SC's /v2/instagram/reels/search 500s
+    frequently on multi-token queries and the pipeline silently returned
+    empty without any indication.
+    """
+
+    def test_zero_items_with_sc_flags_bonus_errored(self):
+        q = _compute(
+            config_overrides={
+                "AUTH_TOKEN": "tok123",
+                "SCRAPECREATORS_API_KEY": "sc_key",
+            },
+            ytdlp_installed=True,
+            result_overrides={"instagram_items_count": 0},
+        )
+        assert "instagram" in q["bonus_errored"]
+        assert q["nudge_text"] is not None
+        assert "Instagram" in q["nudge_text"]
+
+    def test_zero_items_without_sc_does_not_flag(self):
+        q = _compute(
+            config_overrides={"AUTH_TOKEN": "tok123"},
+            ytdlp_installed=True,
+            result_overrides={"instagram_items_count": 0},
+        )
+        assert "instagram" not in q.get("bonus_errored", [])
+
+    def test_nonzero_items_does_not_flag(self):
+        q = _compute(
+            config_overrides={
+                "AUTH_TOKEN": "tok123",
+                "SCRAPECREATORS_API_KEY": "sc_key",
+            },
+            ytdlp_installed=True,
+            result_overrides={"instagram_items_count": 5},
+        )
+        assert "instagram" not in q["bonus_errored"]
+        assert q["nudge_text"] is None
+
+    def test_missing_key_means_source_did_not_run(self):
+        q = _compute(
+            config_overrides={
+                "AUTH_TOKEN": "tok123",
+                "SCRAPECREATORS_API_KEY": "sc_key",
+            },
+            ytdlp_installed=True,
+        )
+        assert "instagram" not in q["bonus_errored"]
+        assert q["nudge_text"] is None
+
+    def test_nudge_text_explains_workaround(self):
+        q = _compute(
+            config_overrides={
+                "AUTH_TOKEN": "tok123",
+                "SCRAPECREATORS_API_KEY": "sc_key",
+            },
+            ytdlp_installed=True,
+            result_overrides={"instagram_items_count": 0},
+        )
+        assert q["nudge_text"] is not None
+        text_lower = q["nudge_text"].lower()
+        assert "instagram" in text_lower
+        assert ("0 reels" in text_lower or "silent" in text_lower
+                or "hashtag" in text_lower)
+
+    def test_bonus_errored_does_not_affect_core_score(self):
+        q = _compute(
+            config_overrides={
+                "AUTH_TOKEN": "tok123",
+                "SCRAPECREATORS_API_KEY": "sc_key",
+            },
+            ytdlp_installed=True,
+            result_overrides={"instagram_items_count": 0},
+        )
+        assert q["score_pct"] == 100
+        assert "instagram" in q["bonus_errored"]
+        assert q["nudge_text"] is not None
+        assert "Bonus source silent" in q["nudge_text"]
+
+    def test_bonus_errored_field_always_present(self):
+        q = _compute()
+        assert q.get("bonus_errored") == []
+
