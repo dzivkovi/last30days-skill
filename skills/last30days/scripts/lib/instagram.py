@@ -19,6 +19,7 @@ except ImportError:
     _requests = None
 
 from . import dates, http, log
+from .relevance import token_overlap_relevance as _compute_relevance
 
 SCRAPECREATORS_BASE = "https://api.scrapecreators.com"
 
@@ -68,8 +69,6 @@ def _resolve_transcript_timeout(
         except (TypeError, ValueError):
             pass
     return float(DEFAULT_TRANSCRIPT_TIMEOUT)
-
-from .relevance import token_overlap_relevance as _compute_relevance
 
 
 def _extract_core_subject(topic: str) -> str:
