@@ -32,3 +32,6 @@ docs/plans/
 
 /work
 /print
+
+# Playwright MCP plugin's transient session dir (snapshot YAMLs, console logs)
+.playwright-mcp/
