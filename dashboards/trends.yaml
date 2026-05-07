@@ -1,7 +1,7 @@
 title: last30days trends dashboard
 description: |
   Eight-panel trends dashboard over ~/.local/share/last30days/research.db, designed for a
-  non-BI marketing user. Every chart is a navigation widget — click into spikes, words,
+  non-BI marketing user. Every chart is a navigation widget  -  click into spikes, words,
   and rows to land on the underlying findings. Panels are filtered to skip topic_id=2
   ("test topic") and dismissed=1 rows so production noise doesn't reach the marketer.
   Trend Matrix and Gone Quiet become meaningful once 2-3 weeks of week-over-week data
@@ -50,7 +50,7 @@ plugins:
           title: Findings this week (last 7 days)
           description: |
             Always reflects the trailing 7 days regardless of the "From date"
-            filter — the metric is a fixed orientation marker, not a filtered view.
+            filter  -  the metric is a fixed orientation marker, not a filtered view.
           db: research
           query: |
             SELECT COUNT(*) AS count
@@ -171,75 +171,105 @@ plugins:
               size: { field: volume, type: quantitative, legend: null }
 
         word-cloud:
-          # Substitution: library:table emulates a wordcloud because v0.8.0 ships
-          # no wordcloud renderer. See dashboards/README.md "word cloud → sized-span
-          # table" for the full rationale.
-          title: Engagement-weighted top words
+          # Vega wordcloud transform  -  replicates upstream master's _convert_wordcloud()
+          # output (see https://github.com/rclement/datasette-dashboards/blob/master/datasette_dashboards/chart_types.py).
+          # Why the inline vega spec instead of `library: wordcloud`: that shorthand
+          # only exists on upstream master, not in v0.8.0 (the released version on PyPI).
+          # The vega-mark transform-on-mark pattern works in v0.8.0 because we never
+          # redeclare `data:`  -  we reference the auto-injected `table` source.
+          title: Word cloud  -  titles, sized by engagement
+          description: |
+            Tokens from `source_title` across non-noise findings, sized by SUM(engagement_score).
+            Hashtags pass through intact. Edit the inline stopword list to prune any words you
+            don't want to see.
           db: research
           query: |
             WITH cleaned AS (
-              -- Lowercase, replace newlines and HTML/JSON-hostile chars (<, >, \)
-              -- with spaces so the constructed JSON array can't be malformed and
-              -- so a summary containing `<script>` cannot inject HTML through the
-              -- table renderer's innerHTML assignment.
-              SELECT id, f.engagement_score,
-                     replace(replace(replace(replace(replace(replace(replace(
-                       replace(replace(replace(replace(replace(replace(replace(
-                         lower(trim(summary)),
-                       char(10), ' '),
-                       '<', ' '), '>', ' '), '\', ' '),
-                       '"', ''), '''', ''),
-                       '.', ' '), ',', ' '), ':', ' '), ';', ' '),
-                       '?', ' '), '!', ' '), '(', ' '), ')', ' ') AS s
+              -- Tokenize source_title (titles are content-rich; summary is engine-jargon
+              -- heavy and was the source of the "Lorem Ipsum" cloud in earlier iterations).
+              -- Strip <, >, \ for HTML/JSON safety. Keep # so hashtags stay distinct.
+              SELECT f.id, f.engagement_score,
+                     replace(   -- '!' -> space
+                     replace(   -- '?' -> space
+                     replace(   -- '|' -> space
+                     replace(   -- ',' -> space
+                     replace(   -- '.' -> space
+                     replace(   -- curly-apostrophe (U+2019) -> ''
+                     replace(   -- straight apostrophe -> ''
+                     replace(   -- '"' -> ''
+                     replace(   -- '\' -> space
+                     replace(   -- '>' -> space
+                     replace(   -- '<' -> space
+                     replace(   -- newline -> space
+                       lower(trim(source_title)),
+                     char(10), ' '),
+                     '<', ' '), '>', ' '), '\', ' '),
+                     '"', ''), '''', ''), char(8217), ''),
+                     '.', ' '), ',', ' '), '|', ' '),
+                     '?', ' '), '!', ' ') AS s
               FROM findings f
-              WHERE summary IS NOT NULL
+              WHERE source_title IS NOT NULL
                 AND topic_id != 2 AND dismissed = 0
                 [[ AND topic_id = :topic ]]
                 [[ AND date(first_seen, 'localtime') >= date(:date_start) ]]
             ),
             arr AS (
               SELECT id, engagement_score,
-                     '["' || replace(replace(s, '-', ' '), ' ', '","') || '"]' AS a
+                     '["' || replace(replace(replace(s, ':', ' '), ';', ' '), ' ', '","') || '"]' AS a
               FROM cleaned
-            ),
-            counted AS (
-              -- json_each over the per-row JSON array splits on spaces.
-              -- Engagement comes from the same row so we don't re-join findings.
-              SELECT b.value AS word,
-                     SUM(arr.engagement_score) AS weight,
-                     COUNT(*) AS frequency
-              FROM arr, json_each(arr.a) b
-              WHERE length(b.value) > 4
-                AND length(b.value) < 24
-                AND b.value NOT IN (
-                  -- English glue / common short words ----------------------
-                  'about','above','after','again','because','before','being','below','between',
-                  'cannot','could','couldnt','doing','during','their','these','there','through',
-                  'under','until','upon','were','what','when','where','which','while','would',
-                  'should','those','your',
-                  -- Source names (mirrors skills/last30days/scripts/lib/sources)
-                  'reddit','tiktok','youtube','instagram','twitter','bluesky','grounding',
-                  'polymarket','github',
-                  -- Engine-jargon: relevance/scoring tokens leaked from prompt outputs
-                  -- (mirrors skills/last30days/scripts/lib/relevance.* prompts; review
-                  -- when prompt wording changes since stale entries silently regress).
-                  'content','topic','video','fallback','local','score','irrelevant',
-                  'offtopic','general','related','specific','factual','provides','offers',
-                  'lacks','utility','broader','comprehensive','anecdotal','limited','technical'
-                )
-              GROUP BY b.value
             )
-            SELECT
-              GROUP_CONCAT(
-                '<span style="font-size:' ||
-                  (12 + CAST(min(weight * 0.4, 36.0) AS INTEGER)) ||
-                  'px; padding:2px 8px; line-height:2; display:inline-block;" ' ||
-                  'title="weight ' || ROUND(weight, 1) || ' / freq ' || frequency || '">' ||
-                  word || '</span>',
-                ''
-              ) AS top_words
-            FROM (SELECT word, weight, frequency FROM counted ORDER BY weight DESC LIMIT 80)
-          library: table
+            SELECT b.value AS word,
+                   SUM(arr.engagement_score) AS weight
+            FROM arr, json_each(arr.a) b
+            WHERE length(b.value) > 3
+              AND length(b.value) < 24
+              AND b.value NOT IN (
+                -- English glue. Titles need far fewer stopwords than summaries did,
+                -- because titles are headline-like and don't carry reasoning prose.
+                'about','above','after','again','also','among','because','before','being',
+                'below','between','could','during','from','have','here','here','into',
+                'just','like','more','most','only','over','should','some','such',
+                'than','that','their','them','then','there','these','they','this',
+                'those','through','under','until','upon','very','were','what','when',
+                'where','which','while','with','would','your',
+                -- Source-name leakage (only kept words that actually appear in titles).
+                'reddit','tiktok','youtube','instagram','twitter','bluesky','grounding',
+                'polymarket','github'
+              )
+            GROUP BY b.value
+            ORDER BY weight DESC
+            LIMIT 100
+          library: vega
+          display:
+            height: 320
+            scales:
+              - name: color
+                type: ordinal
+                domain: { data: table, field: word }
+                range: ["#d5a928", "#652c90", "#939597"]
+            marks:
+              - type: text
+                from: { data: table }
+                encode:
+                  enter:
+                    text: { field: word }
+                    align: { value: center }
+                    baseline: { value: alphabetic }
+                    fill: { scale: color, field: word }
+                  update:
+                    fillOpacity: { value: 1 }
+                  hover:
+                    fillOpacity: { value: 0.5 }
+                transform:
+                  - type: wordcloud
+                    size: [{ signal: width }, { signal: height }]
+                    text: { field: word }
+                    rotate: 0
+                    font: "Helvetica Neue, Arial"
+                    fontSize: { field: datum.weight }
+                    fontWeight: "300"
+                    fontSizeRange: [12, 56]
+                    padding: 2
 
         top-posts:
           title: Top posts (drill terminus)
@@ -296,7 +326,7 @@ plugins:
             )
             SELECT topic, prev_findings, last_findings FROM quiet
             UNION ALL
-            SELECT '(no topics gone quiet yet — needs 3+ runs per topic)' AS topic,
+            SELECT '(no topics gone quiet yet  -  needs 3+ runs per topic)' AS topic,
                    NULL AS prev_findings,
                    NULL AS last_findings
             WHERE (SELECT COUNT(*) FROM quiet) = 0
