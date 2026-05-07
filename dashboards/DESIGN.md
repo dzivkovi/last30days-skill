@@ -159,6 +159,25 @@ That's it. Total time: ~10 minutes for a straightforward panel, longer if the SQ
 
 ---
 
+## The click-to-rescope contract (URL keyword pattern)
+
+Every clickable element in the dashboard navigates the browser to the same URL with `?keyword=<word>` appended. Datasette interprets that as a binding for the `:keyword` parameter, which is referenced by every panel's optional-WHERE block. The dashboard re-renders with all panels scoped to findings whose `source_title` matches that word (substring, case-insensitive).
+
+Three places consume the contract — keep them in lockstep when adding new panels:
+
+1. **Filter declaration** (`filters.keyword:` block at the top of the dashboard): `name: Keyword`, `type: text`. Without this block, the URL parameter is read but no input renders for clearing/escaping the scope.
+2. **Optional-WHERE on each panel** (rule 2 in this doc): `[[ AND source_title LIKE '%' || :keyword || '%' ]]`. Add this to every new panel that should respect the scope. `gone-quiet` is exempt because it operates on run-level (not finding-level) data; a title-substring filter would lose its meaning.
+3. **Click sources** (the things that build the URL):
+   - **Wordcloud**: rendered via `library: vega` + the wordcloud transform with `interactive: true` set explicitly at the mark level. The SQL emits three columns — `word`, `weight`, `href` — and the encoding binds `href: { field: href }` in both `enter` and `update`. Vega installs a runtime click handler at the View instance level; clicking a `<text>` element fires the handler which navigates to the item's `href`. Hover tooltips work the same way (set `tooltip: { signal: "..." }` on `enter`). Because vega's expression language doesn't expose `encodeURIComponent`, the URL is pre-built in SQL with `replace()` chains escaping `#` `&` `?` and space. Important diagnostic note: the rendered SVG has zero `<a>` wrappers — that's expected. The clicks are runtime JS, not parse-time DOM. Don't use a static DOM probe (Playwright's `evaluate` looking for `<a>` elements) to test clickability; use `browser_click` on a `text` element and verify the URL changes.
+   - **Table cells** (resurfacing, top-posts): an extra column built in SQL — see the `keyword_src` CTE in those panels for the canonical pattern. Strip the leading article ("The "/"A "/"An "), lowercase, take the first word, percent-escape URL-unsafe chars (`#` `&` `?` space), wrap in `<a href="?keyword=…">explore</a>`. Pop the resulting cell out as a separate column instead of replacing the title — the brainstorm explicitly favors a discoverable "explore" action over making the entire title cell click-rescope, so the existing "open" external-source link stays visible.
+
+Two things to know that aren't obvious:
+
+- **Filters do not compose across clicks.** Vega builds the navigation URL from the literal `href` field — `topic` and `date_start` reset to defaults every time a user clicks. Filter preservation requires either a vega signal that reads `window.location.search` and merges, or building the merged URL into the SQL `href` column with the current params already encoded. Both deferred. Mention this in the dashboard description so users aren't surprised.
+- **Empty result sets crash table panels.** When `:keyword` matches zero findings, the table renderer crashes on `Object.keys(data.rows[0])`. Every new `library: table` panel that respects the keyword filter MUST handle this — `resurfacing` and `top-posts` use a `shaped` CTE + `UNION ALL` sentinel row guarded by `WHERE (SELECT COUNT(*) FROM shaped) = 0`. Vega/vega-lite chart panels (`word-cloud`, `buzz-by-day`, `source-mix`, `trend-matrix`) handle empty data gracefully and don't need sentinels — vega just renders nothing, no crash.
+
+---
+
 ## How to modify the stopword list
 
 The word-cloud panel inlines a `NOT IN (...)` stopword list at `dashboards/trends.yaml`. The list is split into three labeled groups by SQL comment:
@@ -257,10 +276,9 @@ The dark-factory overnight run that built this dashboard found two P0 bugs at la
 | Filter dropdown changes don't propagate to a panel | Panel SQL forgot the `[[ AND topic_id = :topic ]]` block | Add the optional-WHERE block to the WHERE clause |
 | Datasette won't see new findings without a restart | Rare on Linux/macOS, occasional on Windows when SQLite locking gets weird | Stop datasette (`taskkill //F //PID <pid>`) and relaunch |
 | Today's findings show up under tomorrow's date | SQLite `datetime('now')` is **UTC**, not local; the engine stores UTC. An 8 PM EDT ingestion stamps `2026-05-07 00:00 UTC` and gets bucketed to "tomorrow" if the panel uses bare `date(first_seen)` | Wrap every date column in `date(col, 'localtime')` for display; compare with `date('now', 'localtime', '-N days')` on **both** sides of the comparison. Storage stays UTC (correct as a canonical convention); display localizes |
-
----
-
-## Out of scope (deferred architectural items)
+| Clicking a word in the cloud goes nowhere | The wordcloud uses `library: vega` + the wordcloud transform with `interactive: true` at the mark level — vega installs the click handler at runtime via JS, not via SVG `<a>` wrappers, so the rendered SVG stays clean (just `<text>` elements). If your DOM inspector shows zero `<a>` tags inside the cloud, that's normal — clicks still fire. Real symptom: the URL doesn't change when you click. Likely cause: the `href` channel isn't bound to the data column, or `interactive: true` was dropped from the mark | Confirm `marks[0].interactive: true` is set, the SQL emits a `href` column (build it with `replace()` chains in SQL — vega's expression language doesn't expose `encodeURIComponent`), and the encode block has `href: { field: href }` in both `enter` and `update`. Click test in a real browser (NOT a static DOM probe — Playwright's headless DOM inspection won't see vega's runtime click handlers) |
+| `?keyword=fakekeyword_no_results` crashes the `resurfacing` or `top-posts` panel with `TypeError: Cannot convert undefined or null to object` | The keyword filter narrowed the result set to zero rows; the table renderer crashed on `Object.keys(data.rows[0])` (rule 3 again — the same crash mode that hits `gone-quiet`). Pre-keyword, these panels couldn't return zero rows so the sentinel pattern wasn't needed | Wrap the main SELECT in a `shaped` CTE and `UNION ALL` a sentinel row guarded by `WHERE (SELECT COUNT(*) FROM shaped) = 0`. Mirror the column count + types of the real query so the renderer sees the same column-key surface |
+| Clicking a word resets the `topic` and `From date` filters | The vega `href` signal builds a fresh URL (`'?keyword=' + ...`) instead of merging into the current `window.location.search`, so other filters reset to defaults | Known v1 limitation. Filter preservation needs a vega signal that reads `window.location.search` and re-emits the merged query string — deferred to a future iteration. Workaround: the user re-applies their `topic` / `date_start` after a click |
 
 These are tracked in [PR #2 open questions](https://github.com/dzivkovi/last30days-skill/pull/2). They're listed here so a future maintainer doesn't think they're forgotten — they're explicit deferrals waiting for the data to demand them:
 
