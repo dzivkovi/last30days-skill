@@ -9,6 +9,7 @@ Python scripts with multi-source search aggregation.
 - `skills/last30days/scripts/lib/` — search, enrichment, rendering modules
 - `skills/last30days/scripts/lib/vendor/bird-search/` — vendored X search client
 - `dashboards/` — datasette-dashboards YAML over `~/.local/share/last30days/research.db`
+- `docs/solutions/` — documented solutions to past problems (bugs, design patterns, conventions, workflow learnings), organized by category with YAML frontmatter (`module`, `tags`, `problem_type`). Relevant when implementing or debugging in documented areas — e.g., dashboard clickability gotchas live under `design-patterns/`.
 
 ## Commands
 ```bash
@@ -29,6 +30,7 @@ datasette "$HOME/.local/share/last30days/research.db" -m dashboards/trends.yaml 
 - Tables that may return 0 rows MUST UNION a sentinel row — `renderTableChart` calls `Object.keys(data.rows[0])` and crashes when `data.rows` is empty.
 - Inline HTML in SQL cells (anchors, styled spans) is intentional and depends on `innerHTML` rendering. Always escape `"` in user-supplied URL-style fields via `replace(col, '"', '%22')` and strip `<` / `>` from any field that might contain HTML before concatenation.
 - **Timestamps are stored UTC, displayed local.** The engine's schema defaults `first_seen TEXT DEFAULT (datetime('now'))` — SQLite's `datetime('now')` is **UTC**. Every dashboard panel must wrap date output in `date(col, 'localtime')` and compare with `date('now', 'localtime', '-N days')` on both sides — otherwise an evening-EDT ingestion lands on "tomorrow" because UTC has crossed midnight.
+- **Click-to-rescope URL contract.** The dashboard exposes a `keyword` text filter (alongside `topic` + `date_start`); every content panel except `gone-quiet` includes `[[ AND source_title LIKE '%' || :keyword || '%' ]]` so a `?keyword=<word>` URL re-scopes the dashboard to that substring. Click sources: the wordcloud uses `library: vega` + wordcloud transform with `interactive: true` at the mark level + `href: { field: href }` in `enter`/`update` — vega installs the click handler at runtime via JS (the rendered SVG has zero `<a>` wrappers; that's expected — don't be misled by static DOM inspection). Resurfacing / top-posts emit a separate `explore` column via the `keyword_src` CTE pattern. SQLite has no URL encoder and vega's expression language doesn't expose `encodeURIComponent`, so percent-escape `#` `&` `?` and space via `replace()` chains in SQL for hashtag titles. New table panels respecting the keyword MUST guard against empty results via a `shaped` CTE + `UNION ALL` sentinel (cf. `resurfacing` / `top-posts`); vega panels handle empty data natively. Filters do not compose across clicks (deferred — clicking a word resets `topic` and `date_start`). Verify clickability via a real browser click + URL change, NOT via Playwright's static DOM probe. Full doc: `dashboards/DESIGN.md` — "The click-to-rescope contract" section.
 - Customization handbook: `dashboards/DESIGN.md`. Smoke-test SQL changes via `python dashboards/scripts/sql-dryrun.py` before launching datasette.
 
 ## Beta channel
