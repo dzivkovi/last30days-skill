@@ -28,6 +28,7 @@ datasette "$HOME/.local/share/last30days/research.db" -m dashboards/trends.yaml 
 - Every panel that filters on `findings` MUST include `AND topic_id != 2 AND dismissed = 0` to skip the "test topic" noise + soft-deleted rows.
 - Tables that may return 0 rows MUST UNION a sentinel row — `renderTableChart` calls `Object.keys(data.rows[0])` and crashes when `data.rows` is empty.
 - Inline HTML in SQL cells (anchors, styled spans) is intentional and depends on `innerHTML` rendering. Always escape `"` in user-supplied URL-style fields via `replace(col, '"', '%22')` and strip `<` / `>` from any field that might contain HTML before concatenation.
+- Customization handbook: `dashboards/DESIGN.md`. Smoke-test SQL changes via `python dashboards/scripts/sql-dryrun.py` before launching datasette.
 
 ## Beta channel
 

@@ -61,6 +61,8 @@ The current `summary` field occasionally contains engine-internal text — `fall
 
 ## Customizing
 
+For the design rationale (why these 8 panels, the SQL contract every panel must follow, a 5-step recipe to add a new panel, how to tune the tag-cloud font sizes, where to look first when something breaks) see [`DESIGN.md`](DESIGN.md). That doc is the customization handbook; this README is the launch sheet.
+
 This file ships in the **fork** (`dzivkovi/last30days-skill@daniel/personal`), not upstream. The fork-vs-upstream switching pattern lives in [`CONFIGURATION.md`](../CONFIGURATION.md) Section 5.
 
 To make this YAML the default for the `/last30days:last30days` plugin, point your marketplace at the fork branch:
