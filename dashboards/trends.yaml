@@ -226,17 +226,10 @@ plugins:
               size: { field: volume, type: quantitative, legend: null }
 
         word-cloud:
-          # WHY library:table (not library:vega + wordcloud transform):
-          # The original v1 of this panel rendered via vega's `text` mark + `wordcloud`
-          # transform — beautiful spatial layout, BUT in vega 6.2.0 (the bundled version
-          # in datasette-dashboards 0.8.0) text marks DON'T honor the `href` channel:
-          # the rendered SVG has 100 <text> elements with zero <a> wrappers, so words
-          # aren't actually clickable. The container even sets `cursor:default`,
-          # confirming vega-embed runs non-interactive in this combo.
-          # The fallback documented in DESIGN.md ("emulate via library:table with HTML
-          # <span> cells") gains rock-solid <a> wrapping with no JS — exactly what the
-          # brainstorm's "no custom JavaScript" rule wants — at the cost of random
-          # rotation + spatial packing. Acceptable v1 tradeoff: clickability > pack.
+          # EXPERIMENT: vega wordcloud transform with `interactive: true` at the
+          # mark level + href encoding via pre-built `href` column. Goal: real
+          # spatial cloud + clickable words. If this works, we drop library:table
+          # and ship vega; if not, we revert via `git checkout`.
           title: Word cloud  -  titles, sized by engagement (click to rescope)
           description: |
             Tokens from `source_title` across non-noise findings, sized by SUM(engagement_score).
@@ -278,64 +271,72 @@ plugins:
               SELECT id, engagement_score,
                      '["' || replace(replace(replace(s, ':', ' '), ';', ' '), ' ', '","') || '"]' AS a
               FROM cleaned
-            ),
-            counted AS (
-              SELECT b.value AS word,
-                     SUM(arr.engagement_score) AS weight
-              FROM arr, json_each(arr.a) b
-              WHERE length(b.value) > 3
-                AND length(b.value) < 24
-                AND b.value NOT IN (
-                  -- English glue. Titles need far fewer stopwords than summaries did,
-                  -- because titles are headline-like and don't carry reasoning prose.
-                  'about','above','after','again','also','among','because','before','being',
-                  'below','between','could','during','from','have','here','here','into',
-                  'just','like','more','most','only','over','should','some','such',
-                  'than','that','their','them','then','there','these','they','this',
-                  'those','through','under','until','upon','very','were','what','when',
-                  'where','which','while','with','would','your',
-                  -- Source-name leakage (only kept words that actually appear in titles).
-                  'reddit','tiktok','youtube','instagram','twitter','bluesky','grounding',
-                  'polymarket','github'
-                )
-              GROUP BY b.value
-              ORDER BY weight DESC
-              LIMIT 100
-            ),
-            ranked AS (
-              -- Proportional font-size scaling within the result set so the biggest word
-              -- is always 48px and the smallest is always 12px regardless of corpus size.
-              -- (The DESIGN.md "Tuning the tag-cloud font sizes" worked example.)
-              SELECT word, weight,
-                     ROW_NUMBER() OVER (ORDER BY weight DESC) AS rn,
-                     (SELECT MAX(weight) FROM counted) AS max_w,
-                     (SELECT MIN(weight) FROM counted) AS min_w
-              FROM counted
             )
-            -- One-row, one-cell SELECT: GROUP_CONCAT all words into a single HTML
-            -- string the table renderer assigns via innerHTML. Browser wraps inline
-            -- <a> elements naturally; we don't need explicit flex/grid layout.
-            -- COALESCE handles the empty-result case (no sentinel UNION needed because
-            -- GROUP_CONCAT over zero rows still emits one row, just with NULL value).
-            SELECT COALESCE(
-                     GROUP_CONCAT(
-                       '<a href="?keyword=' ||
-                         replace(replace(replace(replace(
-                           word,
-                         '#', '%23'), '&', '%26'), '?', '%3F'), ' ', '%20') ||
-                         '" title="rescope dashboard to this word"' ||
-                         ' style="text-decoration:none; margin:0 0.4em; line-height:2.4;' ||
-                         ' font-family:Helvetica Neue, Arial; font-weight:300; color:' ||
-                         CASE (rn % 3) WHEN 1 THEN '#d5a928' WHEN 2 THEN '#652c90' ELSE '#939597' END ||
-                         '; font-size:' ||
-                         (12 + CAST(36.0 * (weight - min_w) / NULLIF(max_w - min_w, 0) AS INTEGER)) ||
-                         'px;">' || word || '</a>',
-                       ' '
-                     ),
-                     '<em>(no words match this keyword)</em>'
-                   ) AS "Word cloud (click any word to scope dashboard)"
-            FROM ranked
-          library: table
+            -- Pre-build `href` in SQL — vega's expression language doesn't expose
+            -- encodeURIComponent, and SQLite has no native URL encoder, so we
+            -- replace() the chars that break a query string: `#` (fragment
+            -- delimiter), `&`, `?`, and space.
+            SELECT b.value AS word,
+                   SUM(arr.engagement_score) AS weight,
+                   '?keyword=' ||
+                     replace(replace(replace(replace(
+                       b.value,
+                     '#', '%23'), '&', '%26'), '?', '%3F'), ' ', '%20') AS href
+            FROM arr, json_each(arr.a) b
+            WHERE length(b.value) > 3
+              AND length(b.value) < 24
+              AND b.value NOT IN (
+                -- English glue. Titles need far fewer stopwords than summaries did,
+                -- because titles are headline-like and don't carry reasoning prose.
+                'about','above','after','again','also','among','because','before','being',
+                'below','between','could','during','from','have','here','here','into',
+                'just','like','more','most','only','over','should','some','such',
+                'than','that','their','them','then','there','these','they','this',
+                'those','through','under','until','upon','very','were','what','when',
+                'where','which','while','with','would','your',
+                -- Source-name leakage (only kept words that actually appear in titles).
+                'reddit','tiktok','youtube','instagram','twitter','bluesky','grounding',
+                'polymarket','github'
+              )
+            GROUP BY b.value
+            ORDER BY weight DESC
+            LIMIT 100
+          library: vega
+          display:
+            height: 320
+            scales:
+              - name: color
+                type: ordinal
+                domain: { data: table, field: word }
+                range: ["#d5a928", "#652c90", "#939597"]
+            marks:
+              - type: text
+                interactive: true
+                from: { data: table }
+                encode:
+                  enter:
+                    text: { field: word }
+                    align: { value: center }
+                    baseline: { value: alphabetic }
+                    fill: { scale: color, field: word }
+                    cursor: { value: pointer }
+                    href: { field: href }
+                    tooltip: { signal: "'click to rescope to ' + datum.word" }
+                  update:
+                    fillOpacity: { value: 1 }
+                    href: { field: href }
+                  hover:
+                    fillOpacity: { value: 0.5 }
+                transform:
+                  - type: wordcloud
+                    size: [{ signal: width }, { signal: height }]
+                    text: { field: word }
+                    rotate: 0
+                    font: "Helvetica Neue, Arial"
+                    fontSize: { field: datum.weight }
+                    fontWeight: "300"
+                    fontSizeRange: [12, 56]
+                    padding: 2
 
         top-posts:
           title: Top posts (drill terminus)
