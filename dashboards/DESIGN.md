@@ -159,6 +159,25 @@ That's it. Total time: ~10 minutes for a straightforward panel, longer if the SQ
 
 ---
 
+## The click-to-rescope contract (URL keyword pattern)
+
+Every clickable element in the dashboard navigates the browser to the same URL with `?keyword=<word>` appended. Datasette interprets that as a binding for the `:keyword` parameter, which is referenced by every panel's optional-WHERE block. The dashboard re-renders with all panels scoped to findings whose `source_title` matches that word (substring, case-insensitive).
+
+Three places consume the contract — keep them in lockstep when adding new panels:
+
+1. **Filter declaration** (`filters.keyword:` block at the top of the dashboard): `name: Keyword`, `type: text`. Without this block, the URL parameter is read but no input renders for clearing/escaping the scope.
+2. **Optional-WHERE on each panel** (rule 2 in this doc): `[[ AND source_title LIKE '%' || :keyword || '%' ]]`. Add this to every new panel that should respect the scope. `gone-quiet` is exempt because it operates on run-level (not finding-level) data; a title-substring filter would lose its meaning.
+3. **Click sources** (the things that build the URL):
+   - **Wordcloud**: rendered via `library: table` (NOT vega). The SQL builds a single-cell row whose value is a `GROUP_CONCAT`'d block of `<a href="?keyword=word">word</a>` anchors, each carrying inline `font-size`/`color` styles for the cloud effect. Why not vega: the bundled vega 6.2.0 + wordcloud transform combo doesn't honor `href`/`cursor` on text marks (no `<a>` wrappers in the rendered SVG); the table-with-HTML approach is the documented v0.8.0 emulation pattern and it produces real, clickable anchors with no JS. Trade-off: no random rotation / spatial packing — words flow inline, line-wrapped by the browser. SQLite has no native URL encoder, so percent-escape `#` `&` `?` and space via `replace()` chains for hashtag/ampersand titles.
+   - **Table cells** (resurfacing, top-posts): an extra column built in SQL — see the `keyword_src` CTE in those panels for the canonical pattern. Strip the leading article ("The "/"A "/"An "), lowercase, take the first word, percent-escape URL-unsafe chars (`#` `&` `?` space), wrap in `<a href="?keyword=…">explore</a>`. Pop the resulting cell out as a separate column instead of replacing the title — the brainstorm explicitly favors a discoverable "explore" action over making the entire title cell click-rescope, so the existing "open" external-source link stays visible.
+
+Two things to know that aren't obvious:
+
+- **Filters do not compose across clicks.** `'?keyword=' + word` builds a fresh URL — `topic` and `date_start` reset to defaults every time a user clicks. Filter preservation requires a vega signal that reads `window.location.search` and merges; deferred. Mention this in the dashboard description so users aren't surprised.
+- **Empty result sets crash table panels.** When `:keyword` matches zero findings, the table renderer crashes on `Object.keys(data.rows[0])`. Every new `library: table` panel that respects the keyword filter MUST handle this — `resurfacing` and `top-posts` use a `shaped` CTE + `UNION ALL` sentinel row guarded by `WHERE (SELECT COUNT(*) FROM shaped) = 0`; the wordcloud (also `library: table` post-pivot) uses a simpler `COALESCE(GROUP_CONCAT(...), '<em>(no words match this keyword)</em>')` because GROUP_CONCAT over zero rows already returns one row with NULL. Vega-lite chart panels (`buzz-by-day`, `source-mix`, `trend-matrix`) handle empty data gracefully and don't need sentinels.
+
+---
+
 ## How to modify the stopword list
 
 The word-cloud panel inlines a `NOT IN (...)` stopword list at `dashboards/trends.yaml`. The list is split into three labeled groups by SQL comment:
@@ -257,10 +276,9 @@ The dark-factory overnight run that built this dashboard found two P0 bugs at la
 | Filter dropdown changes don't propagate to a panel | Panel SQL forgot the `[[ AND topic_id = :topic ]]` block | Add the optional-WHERE block to the WHERE clause |
 | Datasette won't see new findings without a restart | Rare on Linux/macOS, occasional on Windows when SQLite locking gets weird | Stop datasette (`taskkill //F //PID <pid>`) and relaunch |
 | Today's findings show up under tomorrow's date | SQLite `datetime('now')` is **UTC**, not local; the engine stores UTC. An 8 PM EDT ingestion stamps `2026-05-07 00:00 UTC` and gets bucketed to "tomorrow" if the panel uses bare `date(first_seen)` | Wrap every date column in `date(col, 'localtime')` for display; compare with `date('now', 'localtime', '-N days')` on **both** sides of the comparison. Storage stays UTC (correct as a canonical convention); display localizes |
-
----
-
-## Out of scope (deferred architectural items)
+| Clicking a word in the cloud goes nowhere | The wordcloud is rendered via `library: table` (a single GROUP_CONCAT'd cell of `<a>` anchors), not via `library: vega` + the wordcloud transform — that combo doesn't honor `href`/`cursor` channels on text marks in the bundled vega 6.2.0 + datasette-dashboards 0.8.0. If you swap back to vega, the SVG renders 100 `<text>` elements with zero `<a>` wrappers, and the container even forces `cursor:default` (vega-embed runs non-interactive in this combo). Verified via Playwright DOM inspection during the click-to-rescope build | Stay on `library: table` + GROUP_CONCAT for the cloud. Each word is built in SQL as `<a href="?keyword=...">word</a>` with inline `font-size`/`color` styles. SQLite has no native URL encoder, so percent-escape `#`, `&`, `?`, and space via `replace()` chains for hashtag/ampersand titles (e.g. `#torontorealestate` → `?keyword=%23torontorealestate`) |
+| `?keyword=fakekeyword_no_results` crashes the `resurfacing` or `top-posts` panel with `TypeError: Cannot convert undefined or null to object` | The keyword filter narrowed the result set to zero rows; the table renderer crashed on `Object.keys(data.rows[0])` (rule 3 again — the same crash mode that hits `gone-quiet`). Pre-keyword, these panels couldn't return zero rows so the sentinel pattern wasn't needed | Wrap the main SELECT in a `shaped` CTE and `UNION ALL` a sentinel row guarded by `WHERE (SELECT COUNT(*) FROM shaped) = 0`. Mirror the column count + types of the real query so the renderer sees the same column-key surface |
+| Clicking a word resets the `topic` and `From date` filters | The vega `href` signal builds a fresh URL (`'?keyword=' + ...`) instead of merging into the current `window.location.search`, so other filters reset to defaults | Known v1 limitation. Filter preservation needs a vega signal that reads `window.location.search` and re-emits the merged query string — deferred to a future iteration. Workaround: the user re-applies their `topic` / `date_start` after a click |
 
 These are tracked in [PR #2 open questions](https://github.com/dzivkovi/last30days-skill/pull/2). They're listed here so a future maintainer doesn't think they're forgotten — they're explicit deferrals waiting for the data to demand them:
 
