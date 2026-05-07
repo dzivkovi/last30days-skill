@@ -9,6 +9,7 @@ Python scripts with multi-source search aggregation.
 - `skills/last30days/scripts/lib/` — search, enrichment, rendering modules
 - `skills/last30days/scripts/lib/vendor/bird-search/` — vendored X search client
 - `dashboards/` — datasette-dashboards YAML over `~/.local/share/last30days/research.db`
+- `docs/solutions/` — documented solutions to past problems (bugs, design patterns, conventions, workflow learnings), organized by category with YAML frontmatter (`module`, `tags`, `problem_type`). Relevant when implementing or debugging in documented areas — e.g., dashboard clickability gotchas live under `design-patterns/`.
 
 ## Commands
 ```bash
