@@ -16,12 +16,13 @@ Then open http://localhost:8002/-/dashboards/last30days-trends.
 
 > **Port.** The `last30days` CLI's `--launch` flag uses port 8001. This dashboard uses 8002 so the two can coexist if you ever launch both.
 
-## Topic and date filters
+## Filters and click-to-rescope
 
-Two cascading filters are wired across the panels:
+Three cascading filters are wired across the panels:
 
 - **Topic** — drop-down sourced from the `topics` table; `id != 2` excludes the "test topic" left over from May-04 fixture testing.
-- **From date** — defaults to `2026-05-01`. Only applies to the time-aware panels (Buzz by Day, Source Mix, Word Cloud).
+- **From date** — defaults to `2026-05-01`. Applies to the time-aware panels (Buzz by Day, Source Mix, Word Cloud).
+- **Keyword** — text input. When set, every content panel except `gone-quiet` scopes to findings whose `source_title` contains the keyword (substring, case-insensitive). Click any cloud word, or any "explore" link in the resurfacing/top-posts tables, to populate this filter from the URL (`?keyword=<word>`). Clear the input + Apply to escape the scope. Full contract documented in [`DESIGN.md`](DESIGN.md) — "The click-to-rescope contract" section.
 
 Filters use datasette's `[[ AND ... ]]` *optional-WHERE block* syntax — when a parameter is unset, the clause is dropped entirely.
 
@@ -34,17 +35,15 @@ Filters use datasette's `[[ AND ... ]]` *optional-WHERE block* syntax — when a
 | 3 | Source mix over time | "Where's the conversation moving?" | `vega-lite` (stacked area) |
 | 4 | Resurfacing content | "What stories keep coming back?" | `table` |
 | 5 | Trend matrix | "Which topic is *emerging*?" | `vega-lite` (scatter) |
-| 6 | Engagement-weighted top words | "What vocabulary dominates?" | `table` (sized HTML spans) |
+| 6 | Engagement-weighted top words | "What vocabulary dominates?" | `vega` (text marks + wordcloud transform, clickable) |
 | 7 | Top posts | "Show me the actual content" | `table` |
 | 8 | Gone quiet | "Where did the conversation stop?" | `table` |
 
-### Substitution: word cloud → sized-span table
+### Wordcloud renderer: `library: vega` + wordcloud transform (clickable)
 
-The original synthesis (see `work/2026-05-05/17-trends-dashboard-synthesis-three-agents.md`) called for `library: wordcloud`, but **datasette-dashboards 0.8.0 ships only five renderers** (`vega`, `vega-lite`, `metric`, `table`, `map`) and no wordcloud library. The bundled `vega.min.js` does include a wordcloud transform, but `renderVegaChart` spread-merges its own `data: [{name: 'table', values: ...}]` last, so a full vega spec that redeclares `data` would clobber the injected query results.
+The original synthesis (see `work/2026-05-05/17-trends-dashboard-synthesis-three-agents.md`) called for `library: wordcloud`, but **datasette-dashboards 0.8.0 ships only five renderers** (`vega`, `vega-lite`, `metric`, `table`, `map`) and no wordcloud shorthand. The pattern that works in v0.8.0: `library: vega` with the bundled vega's wordcloud transform applied as a mark transform, referencing the auto-injected `table` data source rather than redeclaring `data:` (which would clobber the query results).
 
-The pragmatic fix: render the cloud as a `library: table` whose first column is `<span style="font-size:Npx">word</span>`. The table renderer assigns `innerHTML = col` (see `dashboards.js:154`), so inline span styling renders verbatim. Same insight as a circular cloud — vocabulary by engagement — without the layout dependency.
-
-If a future plugin version adds a real `wordcloud` renderer, swap the `library: table` line back to `library: wordcloud` and remove the `<span>` wrapping in the SQL.
+To make each word clickable in this combo, set `interactive: true` at the mark level and bind `href: { field: href }` in `enter` and `update`. Vega installs the click handler at runtime via JS — the rendered SVG has zero `<a>` wrappers, which is **expected** and not a bug. Hover tooltips and `cursor: pointer` work the same way (runtime, not via SVG attrs). The diagnostic warning + canonical YAML pattern + verification recipe are captured in [`docs/solutions/design-patterns/vega-text-mark-runtime-click-handlers-2026-05-07.md`](../docs/solutions/design-patterns/vega-text-mark-runtime-click-handlers-2026-05-07.md) — read that before debugging "the cloud renders but my clicks do nothing."
 
 ### Week-2-meaningful and week-3-meaningful panels
 
