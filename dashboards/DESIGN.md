@@ -256,6 +256,7 @@ The dark-factory overnight run that built this dashboard found two P0 bugs at la
 | Anchor cells render as broken HTML (`>open<` showing as text) | A `"` survived in `source_url` and broke the surrounding `<a href="...">` | Add `replace(source_url, '"', '%22')` to the cell expression |
 | Filter dropdown changes don't propagate to a panel | Panel SQL forgot the `[[ AND topic_id = :topic ]]` block | Add the optional-WHERE block to the WHERE clause |
 | Datasette won't see new findings without a restart | Rare on Linux/macOS, occasional on Windows when SQLite locking gets weird | Stop datasette (`taskkill //F //PID <pid>`) and relaunch |
+| Today's findings show up under tomorrow's date | SQLite `datetime('now')` is **UTC**, not local; the engine stores UTC. An 8 PM EDT ingestion stamps `2026-05-07 00:00 UTC` and gets bucketed to "tomorrow" if the panel uses bare `date(first_seen)` | Wrap every date column in `date(col, 'localtime')` for display; compare with `date('now', 'localtime', '-N days')` on **both** sides of the comparison. Storage stays UTC (correct as a canonical convention); display localizes |
 
 ---
 

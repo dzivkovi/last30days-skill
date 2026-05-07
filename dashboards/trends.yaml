@@ -55,7 +55,7 @@ plugins:
           query: |
             SELECT COUNT(*) AS count
             FROM findings
-            WHERE first_seen >= date('now', '-7 days')
+            WHERE date(first_seen, 'localtime') >= date('now', 'localtime', '-7 days')
               AND topic_id != 2
               AND dismissed = 0
               [[ AND topic_id = :topic ]]
@@ -68,13 +68,13 @@ plugins:
           title: Buzz by day
           db: research
           query: |
-            SELECT date(f.first_seen) AS day,
+            SELECT date(f.first_seen, 'localtime') AS day,
                    t.name AS topic,
                    COUNT(*) AS findings
             FROM findings f JOIN topics t ON t.id = f.topic_id
             WHERE f.topic_id != 2 AND f.dismissed = 0
               [[ AND f.topic_id = :topic ]]
-              [[ AND f.first_seen >= date(:date_start) ]]
+              [[ AND date(f.first_seen, 'localtime') >= date(:date_start) ]]
             GROUP BY day, t.id
             ORDER BY day
           library: vega-lite
@@ -89,13 +89,13 @@ plugins:
           title: Source mix over time
           db: research
           query: |
-            SELECT date(first_seen) AS day,
+            SELECT date(first_seen, 'localtime') AS day,
                    source,
                    COUNT(*) AS findings
             FROM findings
             WHERE topic_id != 2 AND dismissed = 0
               [[ AND topic_id = :topic ]]
-              [[ AND first_seen >= date(:date_start) ]]
+              [[ AND date(first_seen, 'localtime') >= date(:date_start) ]]
             GROUP BY day, source
             ORDER BY day, source
           library: vega-lite
@@ -114,8 +114,8 @@ plugins:
                    source,
                    source_title AS title,
                    ROUND(engagement_score, 1) AS engagement,
-                   date(first_seen) AS first_seen,
-                   date(last_seen) AS last_seen,
+                   date(first_seen, 'localtime') AS first_seen,
+                   date(last_seen, 'localtime') AS last_seen,
                    '<a href="' || replace(source_url, '"', '%22') ||
                      '" target="_blank" rel="noopener">open</a>' AS link
             FROM findings
@@ -138,15 +138,15 @@ plugins:
             WITH this_week AS (
               SELECT topic_id, COUNT(*) AS this_count
               FROM findings
-              WHERE first_seen >= date('now', '-7 days')
+              WHERE date(first_seen, 'localtime') >= date('now', 'localtime', '-7 days')
                 AND topic_id != 2 AND dismissed = 0
               GROUP BY topic_id
             ),
             prev_week AS (
               SELECT topic_id, COUNT(*) AS prev_count
               FROM findings
-              WHERE first_seen >= date('now', '-14 days')
-                AND first_seen < date('now', '-7 days')
+              WHERE date(first_seen, 'localtime') >= date('now', 'localtime', '-14 days')
+                AND date(first_seen, 'localtime') < date('now', 'localtime', '-7 days')
                 AND topic_id != 2 AND dismissed = 0
               GROUP BY topic_id
             )
@@ -195,7 +195,7 @@ plugins:
               WHERE summary IS NOT NULL
                 AND topic_id != 2 AND dismissed = 0
                 [[ AND topic_id = :topic ]]
-                [[ AND first_seen >= date(:date_start) ]]
+                [[ AND date(first_seen, 'localtime') >= date(:date_start) ]]
             ),
             arr AS (
               SELECT id, engagement_score,
@@ -245,7 +245,7 @@ plugins:
           title: Top posts (drill terminus)
           db: research
           query: |
-            SELECT date(first_seen) AS Date,
+            SELECT date(first_seen, 'localtime') AS Date,
                    source AS Source,
                    source_title AS Title,
                    author AS Author,
