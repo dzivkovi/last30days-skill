@@ -188,6 +188,7 @@ Enable "Code execution and file creation" under Capabilities first - skills won'
 ```
 /plugin marketplace add mvanhorn/last30days-skill
 /plugin install last30days
+/last30days:last30days <topic>
 ```
 
 Update later with `claude plugin update last30days@last30days-skill`.
