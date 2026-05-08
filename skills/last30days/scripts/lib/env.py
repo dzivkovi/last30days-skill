@@ -248,6 +248,8 @@ def get_config() -> dict[str, Any]:
         ('LAST30DAYS_X_MODEL', None),
         ('LAST30DAYS_X_BACKEND', None),
         ('LAST30DAYS_STORE', None),
+        ('LAST30DAYS_DEBUG', None),
+        ('LAST30DAYS_SKIP_PREFLIGHT', None),
         ('OPENAI_MODEL_PIN', None),
         ('XAI_MODEL_PIN', None),
         ('SCRAPECREATORS_API_KEY', None),

@@ -3,12 +3,30 @@
 import os
 import sys
 
-DEBUG = os.environ.get("LAST30DAYS_DEBUG", "").lower() in ("1", "true", "yes")
+def is_debug() -> bool:
+    """Return True when LAST30DAYS_DEBUG is set in os.environ.
+
+    Re-read on every call so a runtime bridge from .env -> os.environ takes
+    effect. last30days.py main() bridges config['LAST30DAYS_DEBUG'] ->
+    os.environ after env.get_config() loads .env; a module-level constant
+    would freeze before that bridge runs.
+
+    Use this from any module that needs debug gating (log, http, xai_x, ...).
+    """
+    return os.environ.get("LAST30DAYS_DEBUG", "").lower() in ("1", "true", "yes")
+
+
+def __getattr__(name: str):
+    # Backwards-compat: anything still importing `from log import DEBUG`
+    # gets a fresh value rather than a stale module-load snapshot.
+    if name == "DEBUG":
+        return is_debug()
+    raise AttributeError(f"module 'log' has no attribute {name!r}")
 
 
 def debug(msg: str) -> None:
     """Log debug message to stderr (only when LAST30DAYS_DEBUG is set)."""
-    if DEBUG:
+    if is_debug():
         sys.stderr.write(f"[DEBUG] {msg}\n")
         sys.stderr.flush()
 

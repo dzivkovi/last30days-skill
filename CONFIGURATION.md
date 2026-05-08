@@ -61,10 +61,14 @@ The project-scoped file is the cleanest pattern for **per-client setups**: drop 
 | Threads | `SCRAPECREATORS_API_KEY` + `INCLUDE_SOURCES` contains `threads` | Threads items | 10K free calls |
 | Pinterest | `SCRAPECREATORS_API_KEY` + `INCLUDE_SOURCES` contains `pinterest` | Pinterest items | 10K free calls |
 | Bluesky | `BSKY_HANDLE` + `BSKY_APP_PASSWORD` | Bluesky items | yes (app password at bsky.app) |
-| TruthSocial | `TRUTHSOCIAL_TOKEN` | TruthSocial items | yes |
+| TruthSocial | `TRUTHSOCIAL_TOKEN` | TruthSocial items | yes (browser dev-tools session bearer) |
+| XQuik (X alt) | `XQUIK_API_KEY` | XQuik X-search alternative | paid (xquik.com) |
+| Xiaohongshu | `XIAOHONGSHU_API_BASE` + `--sources xiaohongshu` flag | Xiaohongshu (Little Red Book) items | depends on endpoint |
 | Web search | one of: `BRAVE_API_KEY`, `EXA_API_KEY`, `SERPER_API_KEY`, `PARALLEL_API_KEY` | `--auto-resolve` and Step 2 supplements | Brave has a free tier; native WebSearch on Claude Code / Codex / Gemini works as a fallback |
-| Perplexity Deep Research | `OPENROUTER_API_KEY` | `--deep-research` flag (~$0.90/query) | no |
+| Perplexity Sonar / Deep Research | `OPENROUTER_API_KEY` **and** `INCLUDE_SOURCES` contains `perplexity` | Perplexity items in pipeline runs (also unlocks `--deep-research` flag, ~$0.90/query) | no |
 | Apify (alternate scraper) | `APIFY_API_TOKEN` | fallback for Reddit/TikTok/Instagram when ScrapeCreators is exhausted | yes (limited) |
+
+**Note on X / Twitter:** the engine integrates with **xAI's** Grok-based search of X (`api.x.ai`, key `XAI_API_KEY`), NOT with Twitter's Developer Platform v2 API (`api.twitter.com`, bearer tokens). If you have a Twitter Developer Platform key, the engine ignores it. The supported X paths are: xAI search, bird-search scraper (`AUTH_TOKEN`+`CT0` cookies — `bird_authenticated: true` in `--diagnose`), `SCRAPECREATORS_API_KEY`, or `XQUIK_API_KEY`.
 
 **Example `.env` skeleton** (placeholders only - replace with your own values):
 
@@ -91,7 +95,13 @@ BSKY_APP_PASSWORD=<your-app-password>
 
 After editing: `chmod 600 ~/.config/last30days/.env` (or `chmod 600 .claude/last30days.env` if using the project-scoped variant).
 
-**Troubleshooting:** if a source you expected to see isn't appearing in results, run `python3 scripts/last30days.py --diagnose`. It prints a per-source availability report (which keys were detected, which CLIs are installed, which backends are reachable) without running a full search.
+**Troubleshooting:** if a source you expected to see isn't appearing in results, run `python3 scripts/last30days.py --diagnose`. The output is a JSON report covering:
+
+- `available_sources` — sources currently active for a run
+- `optional_sources` — sources you could enable, with the env var(s) you'd need to set
+- `gaps` — human-readable warnings about configured-but-broken state (e.g. "OPENROUTER_API_KEY is set but 'perplexity' is not in INCLUDE_SOURCES — Perplexity Sonar/Deep Research won't run")
+- `auto_resolved_provider` — when `LAST30DAYS_REASONING_PROVIDER=auto`, which provider actually got picked. If this says `local` you're on the deterministic ranker (no LLM keys configured) — search quality will be visibly lower
+- `providers`, `native_web_backend`, `bird_authenticated`, `has_scrapecreators`, `has_github` — boolean state per backend
 
 ### Bluesky app-password format and search host
 
@@ -102,6 +112,29 @@ The skill defaults to `api.bsky.app` for `searchPosts`, which is the canonical a
 ```bash
 BSKY_SEARCH_HOST=api.bsky.app   # default — change only if Bluesky moves
 ```
+
+---
+
+## Power-tuning knobs (`LAST30DAYS_*`)
+
+These don't unlock new capabilities — they pin or override default behavior. All can be set in shell env or `.env` (the engine bridges `.env`-loaded values into `os.environ` at startup so module-level reads pick them up).
+
+| Var | Effect | Default |
+|---|---|---|
+| `LAST30DAYS_DEBUG=1` | Enable `[DEBUG]` stderr logs across all modules | off |
+| `LAST30DAYS_SKIP_PREFLIGHT=1` | Skip the topic-quality pre-flight gate | off (gate active) |
+| `LAST30DAYS_REASONING_PROVIDER` | Pin to `gemini` / `openai` / `xai` / `openrouter` instead of auto-pick | `auto` |
+| `LAST30DAYS_PLANNER_MODEL` | Override planner model name | provider-default (e.g. `gemini-3.1-flash-lite-preview`) |
+| `LAST30DAYS_RERANK_MODEL` | Override reranker model name | provider-default |
+| `LAST30DAYS_X_BACKEND` | Pin X search to `xai` or `bird` | auto-pick |
+| `LAST30DAYS_X_MODEL` | Pin X-search model name (only when `X_BACKEND=xai`) | provider-default |
+| `OPENAI_MODEL_PIN` / `XAI_MODEL_PIN` | Per-provider model pin (legacy alias) | provider-default |
+| `LAST30DAYS_TRANSCRIPT_TIMEOUT` | Seconds to wait for IG/YT transcript fetch | 30 |
+| `LAST30DAYS_STORE=1` | Persist findings to SQLite on every run (alternative to `--store` flag) | off |
+| `LAST30DAYS_MEMORY_DIR` | Output directory for `<slug>-raw.md` files | `~/Documents/Last30Days/` |
+| `LAST30DAYS_CONFIG_DIR` | Override `.env` directory; set to `""` for no-config mode | `~/.config/last30days/` |
+
+For reproducible client runs, the highest-leverage pin is `LAST30DAYS_REASONING_PROVIDER=<name>` — defends against future config drift even if `auto` would resolve to the same provider today.
 
 ---
 

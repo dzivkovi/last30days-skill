@@ -113,7 +113,12 @@ def available_sources(config: dict[str, Any], requested_sources: list[str] | Non
     if config.get("BRAVE_API_KEY") or config.get("EXA_API_KEY") or config.get("SERPER_API_KEY") or config.get("PARALLEL_API_KEY"):
         available.append("grounding")
     # Perplexity Sonar: opt-in additive source via INCLUDE_SOURCES=perplexity
-    include_sources = (config.get("INCLUDE_SOURCES") or "").lower().split(",")
+    # Strip per-element so "reddit, perplexity" (with spaces around commas)
+    # matches "perplexity" rather than silently producing " perplexity".
+    include_sources = [
+        s.strip()
+        for s in (config.get("INCLUDE_SOURCES") or "").lower().split(",")
+    ]
     if config.get("OPENROUTER_API_KEY") and "perplexity" in include_sources:
         available.append("perplexity")
     if requested_sources and "xiaohongshu" in requested_sources and env.is_xiaohongshu_available(config):
@@ -146,10 +151,71 @@ def diagnose(config: dict[str, Any], requested_sources: list[str] | None = None)
         "xai": bool(config.get("XAI_API_KEY")),
         "openrouter": bool(config.get("OPENROUTER_API_KEY")),
     }
+
+    # Configured-vs-actual gap detection. These warnings answer
+    # "why isn't source X showing up?" without making the user grep source.
+    requested_provider = (config.get("LAST30DAYS_REASONING_PROVIDER") or "auto").lower()
+    if requested_provider == "auto":
+        if providers_status["google"]:
+            auto_resolved = "gemini"
+        elif providers_status["openai"]:
+            auto_resolved = "openai"
+        elif providers_status["xai"]:
+            auto_resolved = "xai"
+        elif providers_status["openrouter"]:
+            auto_resolved = "openrouter"
+        else:
+            auto_resolved = "local"
+    else:
+        auto_resolved = requested_provider
+
+    include_raw_parts = (config.get("INCLUDE_SOURCES") or "").split(",")
+    include_set = {p.strip().lower() for p in include_raw_parts if p.strip()}
+
+    gaps: list[str] = []
+    for raw in include_raw_parts:
+        if raw and raw != raw.strip():
+            gaps.append(
+                f"INCLUDE_SOURCES has whitespace in entry '{raw}' "
+                f"(parsed as '{raw.strip()}')"
+            )
+    if config.get("OPENROUTER_API_KEY") and "perplexity" not in include_set:
+        gaps.append(
+            "OPENROUTER_API_KEY is set but 'perplexity' is not in INCLUDE_SOURCES "
+            "— Perplexity Sonar/Deep Research won't run"
+        )
+    if "perplexity" in include_set and not config.get("OPENROUTER_API_KEY"):
+        gaps.append(
+            "INCLUDE_SOURCES contains 'perplexity' but OPENROUTER_API_KEY is missing"
+        )
+    if auto_resolved == "local":
+        gaps.append(
+            "reasoning_provider=auto resolved to LOCAL (deterministic ranking) "
+            "— add GEMINI_API_KEY/OPENAI_API_KEY/XAI_API_KEY/OPENROUTER_API_KEY for LLM reranking"
+        )
+    if not native_web_backend:
+        gaps.append(
+            "No web search backend (BRAVE/EXA/SERPER/PARALLEL_API_KEY) "
+            "— web grounding, competitor discovery, and entity resolve will be skipped"
+        )
+
+    # Optional sources the user could enable but currently has no key for.
+    # Each entry is (source_name, missing_env_var, note).
+    optional_sources = []
+    if not config.get("TRUTHSOCIAL_TOKEN"):
+        optional_sources.append({"source": "truthsocial", "missing": "TRUTHSOCIAL_TOKEN"})
+    if not config.get("XQUIK_API_KEY"):
+        optional_sources.append({"source": "xquik", "missing": "XQUIK_API_KEY"})
+    if not config.get("XIAOHONGSHU_API_BASE"):
+        optional_sources.append({"source": "xiaohongshu", "missing": "XIAOHONGSHU_API_BASE (and --sources xiaohongshu)"})
+    if not (config.get("AUTH_TOKEN") and config.get("CT0")) and not x_status["bird_authenticated"]:
+        optional_sources.append({"source": "x:bird", "missing": "AUTH_TOKEN+CT0 (or FROM_BROWSER auto-extract)"})
+
     return {
         "providers": providers_status,
         "local_mode": not any(providers_status.values()),
-        "reasoning_provider": (config.get("LAST30DAYS_REASONING_PROVIDER") or "auto").lower(),
+        "reasoning_provider": requested_provider,
+        "auto_resolved_provider": auto_resolved,
         "x_backend": x_status["source"],
         "bird_installed": x_status["bird_installed"],
         "bird_authenticated": x_status["bird_authenticated"],
@@ -158,6 +224,8 @@ def diagnose(config: dict[str, Any], requested_sources: list[str] | None = None)
         "has_scrapecreators": bool(config.get("SCRAPECREATORS_API_KEY")),
         "has_github": bool(config.get("GITHUB_TOKEN") or which("gh")),
         "available_sources": available_sources(config, requested_sources),
+        "optional_sources": optional_sources,
+        "gaps": gaps,
     }
 
 

@@ -533,6 +533,14 @@ def main() -> int:
 
     config = env.get_config()
 
+    # Bridge .env-loaded knobs to os.environ so module-level reads pick them
+    # up. The CONFIGURATION.md "hybrid pattern" claim depends on this.
+    # Without this bridge, LAST30DAYS_DEBUG=1 in .env silently does nothing
+    # because lib/log.py reads os.environ directly.
+    for _key in ("LAST30DAYS_DEBUG", "LAST30DAYS_SKIP_PREFLIGHT"):
+        if not os.environ.get(_key) and config.get(_key):
+            os.environ[_key] = str(config[_key])
+
     # Handle setup subcommand
     topic = " ".join(args.topic).strip()
     if topic.lower() == "setup":
