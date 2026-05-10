@@ -218,7 +218,7 @@ The schedule field stored on each topic is metadata - the actual cron / Task Sch
 
 ## Per-client patterns
 
-The skill is built to flex around different client environments. Four patterns that compose well:
+The skill is built to flex around different client environments. Four patterns that compose well, plus a pointer to the fork-iteration recipe (which lives in its own doc):
 
 ### 1. Per-client `.claude/last30days.env` (preferred when you cd into client folders)
 
@@ -283,49 +283,9 @@ For competitor-vs-comparisons that recur, a pre-written JSON skeleton per client
 
 Pass as `--competitors-plan @client/competitors-plan.json` (or as a string). See `SKILL.md` section "If QUERY_TYPE = COMPARISON" for the full schema.
 
-### 5. Customizing the plugin from your own fork
+### 5. Running your own fork as the daily driver
 
-When you're developing changes against the engine — testing a fix, building a private variant, or staging a contribution upstream — you want the `/last30days:last30days` slash command to invoke **your** code, not the marketplace-installed version. Claude Code's native plugin commands handle this without manual file copying.
-
-**Mental model:** the marketplace name `last30days-skill` is your local handle — like `localhost`. It doesn't change. What changes is which repo it routes to (upstream or your fork). Your fork is your daily driver; you re-route only when you genuinely need pristine upstream (rare).
-
-The example below uses `dzivkovi/last30days-skill@daniel/personal` (the fork [PR #344](https://github.com/mvanhorn/last30days-skill/pull/344) was developed on). Substitute your own `<owner>/<repo>@<branch>`.
-
-**One-time setup — register your fork as the daily driver:**
-
-```text
-/plugin uninstall last30days
-/plugin marketplace add dzivkovi/last30days-skill@daniel/personal
-/plugin install last30days
-/reload-plugins
-```
-
-**Fast iteration once installed — push to your fork → see new code:**
-
-```bash
-git push origin daniel/personal
-```
-
-```text
-/plugin marketplace update last30days-skill
-/reload-plugins
-```
-
-Two commands per push. No teardown, no restart.
-
-**Re-routing to upstream pristine** (rare; for adversarial testing — "did my patch regress something?"):
-
-```text
-/plugin uninstall last30days
-/plugin marketplace remove last30days-skill
-/plugin marketplace add mvanhorn/last30days-skill
-/plugin install last30days
-/reload-plugins
-```
-
-To come back: same five lines, with your fork's `<owner>/<repo>@<branch>` in step 3. Both upstream and your fork register under the same internal marketplace name, so only one is active at a time. This is intentional: keep the install command (`last30days`) constant and re-route the source. The CLI auto-cleans the marketplace cache on `remove`, so no manual cleanup is needed.
-
-**Offline alternative** (rare; only if you're iterating without pushing): point the marketplace at a local clone path instead of the GitHub URL — `/plugin marketplace add /absolute/path/to/your/cloned/repo`. Every `git commit` is then visible to `/plugin marketplace update` without a push.
+If you maintain a fork (per-client variants, in-flight engine fixes, contributions staged for upstream), the four-command reinstall flow + cache verification recipe live in their own doc: see [`FORKING.md`](FORKING.md).
 
 ---
 
