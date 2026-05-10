@@ -775,6 +775,17 @@ Only show lines for platforms where something was resolved. Skip empty lines. On
 2. What subqueries would find the best content across different platforms?
 3. What related angles should be searched at lower weight?
 
+**⚠ `intent` must be EXACTLY one of those 8 values.** Strings outside the set — e.g. `"news"`, `"trending"`, `"recap"` — are silently reclassified by the engine to `concept` with **no warning to the caller**. For `concept` / `factual` intents the engine then caps subqueries to **2** (unless your topic contains an intent-modifier word like "use cases", "workflows", "review", or "examples"), silently truncating from the END of your list.
+
+**For ongoing-beat / social-listening topics** (continuously-evolving markets like "Toronto real estate", not single events), use `intent="breaking_news"` AND explicitly set `"freshness_mode": "balanced_recent"` to override the engine's default `strict_recent`. The `breaking_news` intent gives you a subquery cap of 5; the explicit `balanced_recent` override prevents `strict_recent` from over-filtering older relevant material for slow-moving topics.
+
+**Per-intent subquery caps (silent — exceed at your own risk):**
+- `breaking_news`, `how_to`, `opinion`, `product`, `prediction`: cap **5**
+- `comparison`: cap **4**
+- `concept`, `factual`: cap **2** (or **5** if topic carries an intent-modifier word)
+
+Order your subqueries by importance — when count exceeds the per-intent cap, the engine drops from the END of the list.
+
 **Output a JSON plan with this shape:**
 
 ```json
