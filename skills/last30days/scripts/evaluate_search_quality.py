@@ -288,6 +288,15 @@ def create_eval_env() -> dict[str, str]:
         "PYTHONUTF8": "1",
         "LAST30DAYS_CONFIG_DIR": "",
     }
+    # Path.home() needs at least one of these to resolve. On Windows, Python
+    # checks USERPROFILE then HOMEDRIVE+HOMEPATH. On Unix it checks HOME.
+    # Without these, lib/env.py:30 raises RuntimeError("Could not determine
+    # home directory") on every subprocess invocation, killing the eval before
+    # any topic runs (observed 2026-05-10 on Windows: 8/8 topic failures).
+    for home_key in ("HOME", "USERPROFILE", "HOMEDRIVE", "HOMEPATH"):
+        value = os.environ.get(home_key)
+        if value:
+            passthrough[home_key] = value
     for key in (
         "GOOGLE_API_KEY",
         "GEMINI_API_KEY",

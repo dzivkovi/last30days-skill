@@ -76,3 +76,4 @@ Point the marketplace at a local clone path instead of the GitHub URL — `/plug
 - [`CONFIGURATION.md`](CONFIGURATION.md) — env vars, API keys, per-run flags, per-client patterns.
 - [`SKILL.md`](skills/last30days/SKILL.md) — the runtime contract the engine follows.
 - [`docs/solutions/`](docs/solutions/) — documented past problems and design patterns.
+- [`docs/search-quality-eval.md`](docs/search-quality-eval.md) — regression test that compares retrieval quality between two engine revisions (Jaccard, retention, optional LLM-judge P@5/nDCG@5). Run before publishing a fork change to confirm you didn't accidentally degrade search.
