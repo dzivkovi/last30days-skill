@@ -203,8 +203,18 @@ def _sanitize_plan(
     requested_sources: list[str] | None,
     depth: str,
 ) -> schema.QueryPlan:
-    intent_hint = str(raw.get("intent") or _infer_intent(topic)).strip()
+    import sys
+
+    raw_intent = str(raw.get("intent") or "").strip()
+    intent_hint = raw_intent or _infer_intent(topic)
     if intent_hint not in ALLOWED_INTENTS:
+        if raw_intent:
+            print(
+                f"[Planner] WARNING: intent={raw_intent!r} not in ALLOWED_INTENTS "
+                f"({sorted(ALLOWED_INTENTS)}); reclassifying via _infer_intent(topic). "
+                f"Per-intent freshness/cluster/subquery-cap defaults will reflect the inferred intent.",
+                file=sys.stderr,
+            )
         intent_hint = _infer_intent(topic)
     requested = set(requested_sources or [])
     available = set(available_sources)
@@ -232,9 +242,21 @@ def _sanitize_plan(
             source_weights.setdefault(source, 1.0)
     source_weights = _normalize_weights(source_weights)
 
+    raw_subqueries = raw.get("subqueries") or []
+    cap = _max_subqueries(intent_hint, topic)
+    if len(raw_subqueries) > cap:
+        print(
+            f"[Planner] WARNING: user-provided plan had {len(raw_subqueries)} subqueries; "
+            f"capping to {cap} for intent={intent_hint!r} (extras dropped from end of list). "
+            f"See SKILL.md Step 0.75 for per-intent caps.",
+            file=sys.stderr,
+        )
+
+    skipped_count = 0
     subqueries: list[schema.SubQuery] = []
-    for index, subquery in enumerate((raw.get("subqueries") or [])[:_max_subqueries(intent_hint, topic)], start=1):
+    for index, subquery in enumerate(raw_subqueries[:cap], start=1):
         if not isinstance(subquery, dict):
+            skipped_count += 1
             continue
         sources = [source for source in subquery.get("sources") or [] if source in source_weights]
         if requested:
@@ -244,6 +266,7 @@ def _sanitize_plan(
         search_query = str(subquery.get("search_query") or "").strip()
         ranking_query = str(subquery.get("ranking_query") or "").strip()
         if not search_query or not ranking_query:
+            skipped_count += 1
             continue
         subqueries.append(
             schema.SubQuery(
@@ -257,6 +280,16 @@ def _sanitize_plan(
     if depth == "quick" and subqueries:
         subqueries = subqueries[:1]
     if not subqueries:
+        if raw_subqueries:
+            print(
+                f"[Planner] WARNING: user-provided plan had {len(raw_subqueries)} subqueries "
+                f"but ALL were dropped during validation ({skipped_count} skipped). "
+                f"Most common cause: missing required `ranking_query` field "
+                f"(both `search_query` AND `ranking_query` are required on every subquery). "
+                f"Your intent/freshness_mode/cluster_mode choices are now DISCARDED and "
+                f"replaced by the deterministic fallback plan. See SKILL.md Step 0.75 for the plan schema.",
+                file=sys.stderr,
+            )
         return _fallback_plan(topic, available_sources, requested_sources, depth)
 
     intent = intent_hint

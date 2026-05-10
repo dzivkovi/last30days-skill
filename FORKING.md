@@ -44,7 +44,10 @@ for k, v in data['plugins'].items():
 "
 ```
 
-`gitCommitSha` is the truth: it's the commit the cache install was actually built from. Compare to your fork's `git rev-parse HEAD` — if they don't match, the install didn't propagate. If `installedAt` is older than your latest push, the reinstall didn't trigger; rerun the four-command block.
+`gitCommitSha` is the truth: it's the commit the cache install was actually built from. Compare to your fork's `git rev-parse HEAD` — if they don't match, the install didn't propagate. Two failure shapes to recognize:
+
+- **Stale `installedAt`** — the reinstall didn't trigger; rerun the four-command block.
+- **Fresh `installedAt` + stale `gitCommitSha`** — the marketplace clone wasn't pulled. `/plugin marketplace add` on an already-registered marketplace is silently idempotent (prints "Successfully added" but does NOT `git pull`); make sure the iteration block uses `marketplace update`, not `add`. Quick manual fix without re-running everything: `git -C ~/.claude/plugins/marketplaces/last30days-skill pull`, then redo just `/plugin uninstall` + `/plugin install` + `/reload-plugins`.
 
 **Why this matters:** "did the engine pick up my fix?" is otherwise unanswerable from inside Claude Code. The skill's bash invocation hard-codes `SKILL_ROOT="/c/Users/<you>/.claude/plugins/cache/last30days-skill/last30days/<version>/skills/last30days"` — that path is printed in the skill's own bash output, so a quick scroll-up after a run confirms which version actually ran.
 

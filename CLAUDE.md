@@ -22,6 +22,8 @@ datasette "$HOME/.local/share/last30days/research.db" -m dashboards/trends.yaml 
 - `lib/__init__.py` must be bare package marker (comment only, NO eager imports)
 - After edits: run `bash skills/last30days/scripts/sync.sh` to deploy
 - Git remote: origin = public (`mvanhorn/last30days-skill`)
+- Plugin invocation in user-facing docs and copy-paste examples MUST use the namespaced form `/last30days:last30days` — Claude Code CLI requires it; the VS Code extension also accepts the bare form, so namespaced works everywhere.
+- **Prefer `docs/solutions/` over auto-memory for any learning that affects skill behavior on a fresh checkout.** Memory at `~/.claude/projects/.../memory/` doesn't travel with the repo, so memory-stored learnings degrade portability. Reserve memory for Daniel-specific preferences, work-state pointers, and cross-context user facts. Universal facts (engine bugs, library quirks, conventions) belong in `docs/solutions/`, `CLAUDE.md`, `dashboards/DESIGN.md`, or `README.md`.
 
 ## Dashboards conventions
 

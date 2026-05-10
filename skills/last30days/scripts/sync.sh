@@ -7,8 +7,15 @@ SRC="$(cd "$(dirname "$0")/.." && pwd)"
 echo "Source: $SRC"
 
 COMMON_TARGETS=(
-  # Claude Code plugin cache: marketplace installs overwrite on update,
-  # but local development needs the cache kept in sync with the repo.
+  # Claude Code PUBLIC plugin cache: this is what `/last30days` actually
+  # invokes from the user-facing slash command. Marketplace installs overwrite
+  # this on update, but local development needs the cache kept in sync with
+  # the repo. Without this entry, `bash sync.sh` would only update the beta
+  # channel and the .agents/.codex copies, leaving the live `/last30days`
+  # running stale code from before the last edit.
+  "$HOME/.claude/plugins/cache/last30days-skill/last30days/3.1.1"
+  # Claude Code BETA channel (private repo): parallel `/last30days-beta` slash
+  # command for testing experimental changes before they ship to public.
   # Do NOT add ~/.claude/skills/last30days - it creates a duplicate
   # /last30days-3 in the slash command menu alongside the plugin version.
   "$HOME/.claude/plugins/cache/last30days-skill-private/last30days-3/3.1.1"
@@ -28,28 +35,28 @@ sync_target() {
 
   cp "$skill_md" "$target/SKILL.md"
 
-  rsync -a \
+  cp -R \
     "$SRC/scripts/last30days.py" \
     "$SRC/scripts/watchlist.py" \
     "$SRC/scripts/briefing.py" \
     "$SRC/scripts/store.py" \
     "$target/scripts/"
-  rsync -a "$SRC/scripts/lib/"*.py "$target/scripts/lib/"
+  cp -R "$SRC/scripts/lib/"*.py "$target/scripts/lib/"
 
   # The OpenClaw variant lives in the private repo only. Skip cleanly when
   # running this script from the public repo where variants/open does not exist.
   if [ -d "$SRC/variants/open" ]; then
     mkdir -p "$target/variants/open/references"
-    rsync -a "$SRC/variants/open/" "$target/variants/open/"
+    cp -R "$SRC/variants/open/" "$target/variants/open/"
   fi
 
   if [ -d "$SRC/scripts/lib/vendor" ]; then
-    rsync -a "$SRC/scripts/lib/vendor" "$target/scripts/lib/"
+    cp -R "$SRC/scripts/lib/vendor" "$target/scripts/lib/"
   fi
 
   if [ -d "$SRC/fixtures" ]; then
     mkdir -p "$target/fixtures"
-    rsync -a "$SRC/fixtures/" "$target/fixtures/"
+    cp -R "$SRC/fixtures/" "$target/fixtures/"
   fi
 
   mod_count=$(ls "$target/scripts/lib/"*.py 2>/dev/null | wc -l | tr -d ' ')
@@ -78,21 +85,21 @@ if [ -d "$HOME/.hermes/skills/research" ]; then
   
   cp "$SRC/SKILL.md" "$HERMES_TARGET/SKILL.md"
   
-  rsync -a \
+  cp -R \
     "$SRC/scripts/last30days.py" \
     "$SRC/scripts/watchlist.py" \
     "$SRC/scripts/briefing.py" \
     "$SRC/scripts/store.py" \
     "$HERMES_TARGET/scripts/"
-  rsync -a "$SRC/scripts/lib/"*.py "$HERMES_TARGET/scripts/lib/"
+  cp -R "$SRC/scripts/lib/"*.py "$HERMES_TARGET/scripts/lib/"
   
   if [ -d "$SRC/scripts/lib/vendor" ]; then
-    rsync -a "$SRC/scripts/lib/vendor" "$HERMES_TARGET/scripts/lib/"
+    cp -R "$SRC/scripts/lib/vendor" "$HERMES_TARGET/scripts/lib/"
   fi
   
   if [ -d "$SRC/fixtures" ]; then
     mkdir -p "$HERMES_TARGET/fixtures"
-    rsync -a "$SRC/fixtures/" "$HERMES_TARGET/fixtures/"
+    cp -R "$SRC/fixtures/" "$HERMES_TARGET/fixtures/"
   fi
   
   mod_count=$(ls "$HERMES_TARGET/scripts/lib/"*.py 2>/dev/null | wc -l | tr -d ' ')
