@@ -1,5 +1,5 @@
 # ruff: noqa: E402
-"""Tests for the three silent-failure warnings in planner._sanitize_plan.
+"""Tests for the four silent-failure warnings in planner._sanitize_plan / _trim_subqueries_for_depth.
 
 Regression coverage for the 2026-05-09 / 2026-05-10 silent-fallback bugs:
 1. Invalid `intent` strings get silently reclassified to `_infer_intent(topic)`
@@ -7,9 +7,12 @@ Regression coverage for the 2026-05-09 / 2026-05-10 silent-fallback bugs:
 3. Subqueries missing required `ranking_query` field cause every subquery to be
    skipped, triggering `_fallback_plan()` that DISCARDS the user's
    intent/freshness_mode/cluster_mode choices entirely
+4. (Issue #5, added 2026-05-10) At non-quick depth, caller-supplied per-subquery
+   `sources` arrays are silently replaced with capability-routed defaults
+   (`_default_sources_for_intent`) in `_trim_subqueries_for_depth`
 
-All three paths now emit `[Planner] WARNING:` lines on stderr. These tests assert
-both the behavior (reclassification / truncation / fallback) AND the warning text.
+All four paths now emit `[Planner] WARNING:` lines on stderr. These tests assert
+both the behavior AND the warning text.
 """
 
 from __future__ import annotations
@@ -166,6 +169,155 @@ class HappyPathSilentTests(unittest.TestCase):
         self.assertEqual(plan.freshness_mode, "balanced_recent")
         self.assertEqual(plan.cluster_mode, "story")
         self.assertEqual(len(plan.subqueries), 2)
+
+
+def _narrow_subquery(label: str, query: str, sources: list[str]) -> dict:
+    """Same as _valid_subquery but with explicit narrow sources list."""
+    return {
+        "label": label,
+        "search_query": query,
+        "ranking_query": f"What is happening with {query}?",
+        "sources": sources,
+        "weight": 1.0,
+    }
+
+
+def _sanitize_quick(raw: dict, topic: str = "Toronto real estate"):
+    """Like _sanitize but at depth=quick (override branch must NOT fire)."""
+    err = io.StringIO()
+    with redirect_stderr(err):
+        plan = planner._sanitize_plan(
+            raw,
+            topic=topic,
+            available_sources=["reddit", "x", "youtube", "tiktok", "instagram"],
+            requested_sources=None,
+            depth="quick",
+        )
+    return plan, err.getvalue()
+
+
+class SubquerySourceOverrideTests(unittest.TestCase):
+    """WARNING 4 (Issue #5, 2026-05-10): non-quick depth silently rewrites
+    caller-supplied per-subquery `sources` arrays.
+
+    The smoking gun is the British Airways run on 2026-05-10:
+    a `--plan` with four subqueries each carrying deliberately narrow sources
+    (3-7 of 12 available) was rewritten to use the same 12-source list on all
+    four subqueries with zero observable signal. Issue #5 establishes a
+    breadcrumb that mirrors the convention added 2026-05-10 for the other three
+    `_sanitize_plan` paths.
+
+    The override path itself is unchanged — it remains the engine's
+    documented behavior at non-quick depth ("we override to let fusion decide
+    quality"). Only the observability gap is closed.
+    """
+
+    def test_narrow_sources_emits_warning(self):
+        """Caller-supplied narrow sources at non-quick depth → WARNING fires."""
+        _, stderr = _sanitize({
+            "intent": "breaking_news",
+            "subqueries": [
+                _narrow_subquery("primary", "Toronto real estate", ["reddit", "x"]),
+                _narrow_subquery("condo", "Toronto condo", ["reddit", "youtube"]),
+            ],
+        })
+        self.assertIn("WARNING:", stderr)
+        self.assertIn("rewrote per-subquery sources", stderr)
+        self.assertIn("for 2 of 2 subqueries", stderr)
+        self.assertIn("intent='breaking_news'", stderr)
+
+    def test_narrow_sources_still_overrides_to_expanded(self):
+        """The override BEHAVIOR is unchanged — only observability is added."""
+        plan, _ = _sanitize({
+            "intent": "breaking_news",
+            "subqueries": [
+                _narrow_subquery("primary", "Toronto real estate", ["reddit", "x"]),
+            ],
+        })
+        # Behavior preserved: all 5 available sources are present after override.
+        self.assertEqual(
+            set(plan.subqueries[0].sources),
+            {"reddit", "x", "youtube", "tiktok", "instagram"},
+        )
+
+    def test_all_sources_does_not_warn(self):
+        """When caller already passed all-sources, no material change → no warning."""
+        _, stderr = _sanitize({
+            "intent": "breaking_news",
+            "subqueries": [
+                _narrow_subquery(
+                    "primary",
+                    "Toronto real estate",
+                    ["reddit", "x", "youtube", "tiktok", "instagram"],
+                ),
+            ],
+        })
+        self.assertNotIn("rewrote per-subquery sources", stderr)
+
+    def test_omitted_sources_does_not_warn(self):
+        """When caller omits `sources`, _sanitize_plan defaults to all sources
+        BEFORE _trim_subqueries_for_depth sees it — so the override is a no-op,
+        no warning fires."""
+        _, stderr = _sanitize({
+            "intent": "breaking_news",
+            "subqueries": [_valid_subquery("primary", "Toronto real estate")],
+        })
+        self.assertNotIn("rewrote per-subquery sources", stderr)
+
+    def test_quick_depth_does_not_warn(self):
+        """At depth=quick the override branch is not entered — no warning even
+        with narrow caller sources. Quick has different (legitimate) trimming
+        behavior; the breadcrumb only applies to the silent-override path."""
+        _, stderr = _sanitize_quick({
+            "intent": "breaking_news",
+            "subqueries": [
+                _narrow_subquery("primary", "Toronto real estate", ["reddit", "x"]),
+            ],
+        })
+        self.assertNotIn("rewrote per-subquery sources", stderr)
+
+    def test_partial_narrow_reports_accurate_count(self):
+        """Count in warning text reflects only the materially-rewritten subqueries.
+
+        Test built around the issue's smoking-gun: one subquery already all-sources,
+        others narrow — count should be "N of M" where N < M."""
+        _, stderr = _sanitize({
+            "intent": "breaking_news",
+            "subqueries": [
+                # Already all 5 → no rewrite for this one
+                _narrow_subquery(
+                    "wide", "Toronto real estate",
+                    ["reddit", "x", "youtube", "tiktok", "instagram"],
+                ),
+                # Narrow → rewritten
+                _narrow_subquery("narrow", "Toronto condo", ["reddit"]),
+                # Narrow → rewritten
+                _narrow_subquery("narrow2", "GTA prices", ["youtube", "x"]),
+            ],
+        })
+        self.assertIn("WARNING:", stderr)
+        self.assertIn("for 2 of 3 subqueries", stderr)
+
+    def test_warning_does_not_suggest_quick_flag(self):
+        """Per Issue #5 design constraint #3: warning must NOT misdirect to --quick
+        (which caps sources AND drops subqueries, not honoring the exact plan)."""
+        _, stderr = _sanitize({
+            "intent": "breaking_news",
+            "subqueries": [
+                _narrow_subquery("primary", "Toronto real estate", ["reddit"]),
+            ],
+        })
+        rewrite_lines = [
+            line for line in stderr.splitlines()
+            if "rewrote per-subquery sources" in line
+        ]
+        self.assertEqual(len(rewrite_lines), 1)
+        # The warning's full continuation may span the next line(s); search the
+        # whole stderr blob to be robust to wrapping.
+        warning_block = stderr[stderr.find("rewrote per-subquery sources"):]
+        # Acknowledges no current honoring-flag exists; doesn't recommend --quick.
+        self.assertNotIn("use --quick", warning_block)
+        self.assertNotIn("pass --quick", warning_block)
 
 
 if __name__ == "__main__":

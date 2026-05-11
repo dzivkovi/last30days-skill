@@ -12,8 +12,10 @@ applies_when:
   - choosing the intent value when calling /last30days from another agent or skill
   - debugging "my plan had N subqueries but engine only ran M"
   - debugging "my plan's intent/freshness/cluster_mode all reverted to defaults despite source=external"
+  - debugging "my plan had narrow per-subquery `sources` but engine ran all 12"
   - extending the planner FSM or adding a new intent type
   - investigating why a research run produced thinner output than expected
+  - extending the engine-override breadcrumb convention to a new code site
 tags:
   - planner
   - intent
@@ -27,13 +29,16 @@ tags:
 
 ## Context
 
-The `/last30days` skill's calling-agent contract (SKILL.md "LAW 7") says: *"YOU are the planner — pass `--plan`, the engine respects it."* Until 2026-05-10 the engine applied **three silent transformations** to user-provided plans that calling agents needed to discover the hard way. As of 2026-05-10 all three now emit `[Planner] WARNING:` lines on stderr (see `skills/last30days/scripts/lib/planner.py:_sanitize_plan` and `tests/test_planner_silent_failure_warnings.py`):
+The `/last30days` skill's calling-agent contract (SKILL.md "LAW 7") says: *"YOU are the planner — pass `--plan`, the engine respects it."* Until 2026-05-10 the engine applied **four silent transformations** to user-provided plans that calling agents needed to discover the hard way. As of 2026-05-10 all four now emit `[Planner] WARNING:` lines on stderr (see `skills/last30days/scripts/lib/planner.py:_sanitize_plan` / `_trim_subqueries_for_depth` and `tests/test_planner_silent_failure_warnings.py`):
 
 1. **`intent` strings outside `ALLOWED_INTENTS` are reclassified** to whatever `_infer_intent(topic)` returns. Most unclassified topics resolve to `concept` per Matt's deliberate Unit 3 choice in commit `4d9f29d`.
 2. **Subquery counts above the per-intent cap are truncated from the END of the list** before any source backend is invoked.
-3. **(Newest, discovered 2026-05-10)** **Subqueries missing the required `ranking_query` field cause EVERY subquery to be skipped, triggering `_fallback_plan()` which DISCARDS the user's intent / freshness_mode / cluster_mode choices entirely.** Even a perfectly valid `intent="breaking_news"` is lost because the fallback path is reached before those fields are read.
+3. **(Discovered 2026-05-10)** **Subqueries missing the required `ranking_query` field cause EVERY subquery to be skipped, triggering `_fallback_plan()` which DISCARDS the user's intent / freshness_mode / cluster_mode choices entirely.** Even a perfectly valid `intent="breaking_news"` is lost because the fallback path is reached before those fields are read.
+4. **(Issue #5, added 2026-05-10)** **At non-quick depth, caller-supplied per-subquery `sources` arrays are replaced with capability-routed defaults** (`_default_sources_for_intent(intent, available_sources)`) inside `_trim_subqueries_for_depth`. The override is documented in a code comment ("we override to let fusion decide quality") but was invisible to callers — a `--plan` with deliberately narrow per-subquery routing got rewritten to all-12-sources on every subquery.
 
-These behaviors aren't bugs. The cap was added in commit `4d9f29d` (2026-04-19, the "Hermes Agent Use Cases" failure) to defend against the engine's own auto-planner LLM producing near-duplicate subqueries when topics don't have natural fanout. The default `concept` over `breaking_news` was a deliberate Unit 3 trade to preserve evergreen recall on unclassified topics. The `ranking_query` requirement protects the fusion stage which uses ranking queries for relevance scoring. All three choices are defensible — but they were undocumented from the calling-agent's perspective, and they're applied to *external* plans (where the calling agent has more context than the auto-planner) using the same logic as for *internal* plans.
+These behaviors aren't bugs. The cap was added in commit `4d9f29d` (2026-04-19, the "Hermes Agent Use Cases" failure) to defend against the engine's own auto-planner LLM producing near-duplicate subqueries when topics don't have natural fanout. The default `concept` over `breaking_news` was a deliberate Unit 3 trade to preserve evergreen recall on unclassified topics. The `ranking_query` requirement protects the fusion stage which uses ranking queries for relevance scoring. The non-quick source expansion broadens retrieval so fusion+reranking decide quality. All four choices are defensible — but they were undocumented from the calling-agent's perspective, and they're applied to *external* plans (where the calling agent has more context than the auto-planner) using the same logic as for *internal* plans.
+
+**Convention reaffirmed by Issue #5** (the materiality filter): emit a `[Planner] WARNING: ...` line only when a caller-authored, schema-valid field passed via `--plan` is intentionally replaced or capped in a way that changes retrieval semantics. Do NOT log for routine internal normalization (dropping sources without configured env vars, weight clamping, whitespace stripping). This convention now applies at four call sites in planner.py; future override points should follow it.
 
 ## Guidance
 
@@ -194,6 +199,37 @@ The fix in your `--plan` JSON is to ensure every subquery has BOTH:
 
 `search_query` is keyword-heavy (matches platform titles); `ranking_query` is a natural-language question (used by the fusion stage for relevance scoring). They serve different purposes; both are mandatory.
 
+## The fourth silent-failure path (added 2026-05-10, Issue #5) — non-quick depth rewrites per-subquery sources
+
+At any depth other than `quick`, `_trim_subqueries_for_depth` replaces every subquery's `sources` field with `_default_sources_for_intent(intent, available_sources)` — capability-routed defaults for the intent. The override is intentional ("we override to let fusion decide quality"; broadening retrieval is usually a win) but was invisible to callers until now.
+
+**The 2026-05-10 British Airways run** is the canonical example. Submitted plan had four subqueries with deliberately narrow per-subquery routing:
+
+| Subquery | Caller-passed `sources` |
+|---|---|
+| sq1 primary | `[reddit, x, youtube, tiktok, instagram, hackernews, polymarket]` (7) |
+| sq2 routes | `[reddit, x, youtube, web]` (4) |
+| sq3 airspace | `[reddit, polymarket, hackernews, web, x]` (5) |
+| sq4 passenger_impact | `[reddit, x, youtube]` (3) |
+
+The engine logged all 4 subqueries with the same 12-source list. No signal that routing was overridden.
+
+**As of 2026-05-10** this path now emits a warning:
+
+```
+[Planner] WARNING: non-quick depth rewrote per-subquery sources for 3 of 4 subqueries
+(caller-supplied source lists discarded in favor of capability-routed defaults for
+intent='breaking_news'). Exact plan-source honoring is not currently supported via a flag.
+```
+
+The warning fires only when at least one subquery's caller-supplied `sources` set differs from the expanded set (materiality filter). No warning when:
+
+- caller passes all-available sources on every subquery (no material change)
+- caller omits `sources` entirely (sanitizer defaults to all-sources before the override sees it)
+- `depth=quick` (the override branch is not entered)
+
+**Note on `--quick` as a workaround**: it is NOT one. Quick mode caps sources AND drops subqueries from the cap (it does not honor the caller's exact plan-source assignments). No flag currently exists for strict plan-source honoring; the warning text acknowledges this explicitly to avoid misdirecting callers. Adding a `--honor-plan-sources` / `--plan-strict` flag is plausible future work but out of scope for Issue #5 (observability gap only).
+
 ## How to verify in your own runs
 
 Run with stderr captured (or look at the bash output in your Claude Code session). The first informational line from the planner looks like:
@@ -202,7 +238,7 @@ Run with stderr captured (or look at the bash output in your Claude Code session
 [Planner] Plan: intent=concept, freshness=balanced_recent, cluster_mode=story, subqueries=2, source=external
 ```
 
-If `subqueries=N` is less than what you submitted, the engine truncated (look for `WARNING: capping to N`). If `intent=X` is different from what you submitted, the engine reclassified (look for `WARNING: intent='...' not in ALLOWED_INTENTS`). If EVERY field reverted to defaults, your subqueries failed validation and the engine fell back (look for `WARNING: ALL were dropped during validation`). All three paths now log explicitly — the silent-failure era ended 2026-05-10.
+If `subqueries=N` is less than what you submitted, the engine truncated (look for `WARNING: capping to N`). If `intent=X` is different from what you submitted, the engine reclassified (look for `WARNING: intent='...' not in ALLOWED_INTENTS`). If EVERY field reverted to defaults, your subqueries failed validation and the engine fell back (look for `WARNING: ALL were dropped during validation`). If your per-subquery `sources` arrays got broadened on you, the non-quick override fired (look for `WARNING: non-quick depth rewrote per-subquery sources for N of M subqueries`). All four paths now log explicitly — the silent-failure era ended 2026-05-10.
 
 You can also probe the engine's classification of any topic+intent combination directly without running a full search:
 
@@ -216,10 +252,11 @@ This is how the perplexity-causality test on 2026-05-09 conclusively proved that
 
 ## Related
 
-- Investigation chain (this fork's work notes): `work/2026-05-08/{02,04,05}-*.md`, `work/2026-05-09/{01,02}-*.md`, `work/2026-05-10/{01,03}-*.md`
+- Investigation chain (this fork's work notes): `work/2026-05-08/{02,04,05}-*.md`, `work/2026-05-09/{01,02}-*.md`, `work/2026-05-10/{01,03,09,10}-*.md`
+- Issue #5 (`dzivkovi/last30days-skill#5`) — the 4th silent-failure path; same convention as the 5821b84 precedent. Spec authored after a Claude (Opus 4.7, 1M context) + Codex two-round audit captured in `work/2026-05-10/10-silent-failover-audit-for-codex-review.md`.
 - SKILL.md Step 0.75 update (this fork): adds the 8-value list + per-intent cap table + ongoing-beat guidance inline
 - Upstream issue draft (this fork): `work/2026-05-09/02-upstream-issue-draft-fsm-gap-news-intent.md` — frames the FSM gap for `mvanhorn/last30days-skill` (now updated 2026-05-10 to include the third silent-failure path)
 - Origin commit for the cap: `4d9f29d` "fix: broaden planner retrieval and fix deterministic fallback defaults" (2026-04-19) — Matt's commit message defends both the cap-2 for concept and the `concept`-as-default decisions
 - Source: `skills/last30days/scripts/lib/planner.py:_sanitize_plan` (all three warning sites)
-- Regression coverage (added 2026-05-10): `tests/test_planner_silent_failure_warnings.py` — 10 pytest cases covering all three silent-failure paths plus a happy-path silence assertion
+- Regression coverage (added 2026-05-10): `tests/test_planner_silent_failure_warnings.py` — 17 unittest cases covering all four silent-failure paths plus a happy-path silence assertion (3 cases for invalid-intent, 3 for excess-subqueries truncation, 3 for missing-ranking-query fallback, 1 for happy-path silence, 7 for non-quick source-override added per Issue #5)
 - Multi-agent review: Codex initially recommended structural FSM fix; revised position to "use existing FSM correctly" after seeing commit `4d9f29d`'s deliberate-design reasoning. Convergence captured in `work/2026-05-09/01-...md`. Second Codex pass on 2026-05-10 confirmed today's `_fallback_plan` discards-everything diagnosis and converged on warning-based fix over structural change.
