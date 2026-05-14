@@ -344,6 +344,26 @@ def _trim_subqueries_for_depth(
     # assign narrow source lists; we override to let fusion decide quality.
     if depth != "quick":
         expanded_sources = _default_sources_for_intent(intent, available_sources)
+        # Set comparison is deliberate: every downstream consumer of
+        # subquery.sources (pipeline.py:304/319/388/393/816, planner.py:371)
+        # treats it as a set or fans it out via ThreadPoolExecutor + as_completed,
+        # so caller-vs-canonical ORDER differences are not material. Only set
+        # membership differences trigger the breadcrumb.
+        expanded_set = set(expanded_sources)
+        rewritten = sum(
+            1 for subquery in subqueries
+            if set(subquery.sources) != expanded_set
+        )
+        if rewritten:
+            import sys
+            print(
+                f"[Planner] WARNING: non-quick depth rewrote per-subquery sources "
+                f"for {rewritten} of {len(subqueries)} subqueries "
+                f"(caller-supplied source lists discarded in favor of capability-routed "
+                f"defaults for intent={intent!r}). Exact plan-source honoring is not "
+                f"currently supported via a flag.",
+                file=sys.stderr,
+            )
         return [
             schema.SubQuery(
                 label=subquery.label,
