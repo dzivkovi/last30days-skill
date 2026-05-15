@@ -29,11 +29,21 @@ plugins:
         and date to focus, or click any word in the cloud (or any title in the tables)
         to scope the whole dashboard to findings about that word. Clear the Keyword
         input + Apply to escape the scope.
+      # Layout philosophy (post 2026-05-14 revision, after Codex critique):
+      # Visuals first (rows 1-5), then text tables (rows 6-7), then sparse-by-design (row 8).
+      # The user actively SEEKS the word cloud, so it's promoted to row 2 (right after the
+      # overview heartbeat) -- never makes the user scroll past a text wall to reach it.
+      # The new lifecycle-bubble at row 3 is honestly labeled for week-1 cadence ("emerging
+      # activity map"), not falsely promoted as lifecycle truth. Resurfacing + top-posts +
+      # gone-quiet stay (kept, not deleted -- local working memory across 2 use cases),
+      # but capped to 10 rows each and pushed below the visuals.
       layout:
         - [findings-this-week, findings-this-week, buzz-by-day, buzz-by-day, buzz-by-day, buzz-by-day]
-        - [source-mix, source-mix, source-mix, source-mix, source-mix, source-mix]
-        - [resurfacing, resurfacing, resurfacing, trend-matrix, trend-matrix, trend-matrix]
         - [word-cloud, word-cloud, word-cloud, word-cloud, word-cloud, word-cloud]
+        - [lifecycle-bubble, lifecycle-bubble, lifecycle-bubble, lifecycle-bubble, lifecycle-bubble, lifecycle-bubble]
+        - [source-mix, source-mix, source-mix, source-mix, source-mix, source-mix]
+        - [trend-matrix, trend-matrix, trend-matrix, trend-matrix, trend-matrix, trend-matrix]
+        - [resurfacing, resurfacing, resurfacing, resurfacing, resurfacing, resurfacing]
         - [top-posts, top-posts, top-posts, top-posts, top-posts, top-posts]
         - [gone-quiet, gone-quiet, gone-quiet, gone-quiet, gone-quiet, gone-quiet]
       filters:
@@ -91,139 +101,6 @@ plugins:
               x: { field: day, type: temporal, title: Day }
               y: { field: findings, type: quantitative, title: New findings }
               color: { field: topic, type: nominal, title: Topic }
-
-        source-mix:
-          title: Source mix over time
-          db: research
-          query: |
-            SELECT date(first_seen, 'localtime') AS day,
-                   source,
-                   COUNT(*) AS findings
-            FROM findings
-            WHERE topic_id != 2 AND dismissed = 0
-              [[ AND topic_id = :topic ]]
-              [[ AND date(first_seen, 'localtime') >= date(:date_start) ]]
-              [[ AND source_title LIKE '%' || :keyword || '%' ]]
-            GROUP BY day, source
-            ORDER BY day, source
-          library: vega-lite
-          display:
-            mark: { type: area, tooltip: true }
-            encoding:
-              x: { field: day, type: temporal, title: Day }
-              y: { field: findings, type: quantitative, title: New findings, stack: zero }
-              color: { field: source, type: nominal, title: Source }
-
-        resurfacing:
-          title: Resurfacing content (sighting_count > 1)
-          db: research
-          # The sentinel-UNION pattern (cf. `gone-quiet`) is now load-bearing here:
-          # before the keyword filter existed, this query couldn't return zero rows
-          # (any non-noise corpus had sighting_count > 1 entries). With ?keyword=foo
-          # the result set CAN be empty, and the table renderer crashes on empty
-          # results (`Object.keys(data.rows[0])` => TypeError). Sentinel guarantees
-          # one row.
-          query: |
-            -- `keyword_src` is source_title lowercased + leading article ("The "/"A "/"An ")
-            -- stripped, so the first word for rescoping is always the first NOUN-ish token.
-            -- The base CTE keeps row scoping (the optional :keyword WHERE block) in one
-            -- place; the final SELECT just shapes columns + builds anchors.
-            WITH base AS (
-              SELECT sighting_count, source, source_title, engagement_score,
-                     first_seen, last_seen, source_url,
-                     CASE
-                       WHEN lower(source_title) LIKE 'the %' THEN lower(substr(source_title, 5))
-                       WHEN lower(source_title) LIKE 'a %'   THEN lower(substr(source_title, 3))
-                       WHEN lower(source_title) LIKE 'an %'  THEN lower(substr(source_title, 4))
-                       ELSE lower(source_title)
-                     END AS keyword_src
-              FROM findings
-              WHERE sighting_count > 1
-                AND topic_id != 2
-                AND dismissed = 0
-                [[ AND topic_id = :topic ]]
-                [[ AND source_title LIKE '%' || :keyword || '%' ]]
-            ),
-            shaped AS (
-              SELECT sighting_count AS sightings,
-                     source,
-                     -- Strip < > \ per DESIGN.md rule 4 (innerHTML rendering); titles
-                     -- come from third-party APIs and could carry markup chars.
-                     replace(replace(replace(source_title, '<', ''), '>', ''), '\', '') AS title,
-                     ROUND(engagement_score, 1) AS engagement,
-                     date(first_seen, 'localtime') AS first_seen,
-                     date(last_seen, 'localtime') AS last_seen,
-                     -- Rescope-this-dashboard anchor: ?keyword=<first-word-of-title>.
-                     -- Percent-encode # & ? and spaces so hashtag/ampersand titles
-                     -- don't break the URL (e.g. "#torontorealestate" -> "%23...").
-                     '<a href="?keyword=' ||
-                       replace(replace(replace(replace(
-                         substr(keyword_src, 1, instr(keyword_src || ' ', ' ') - 1),
-                       '#', '%23'), '&', '%26'), '?', '%3F'), ' ', '%20') ||
-                       '" title="rescope dashboard to this word">explore</a>' AS explore,
-                     '<a href="' || replace(source_url, '"', '%22') ||
-                       '" target="_blank" rel="noopener">open</a>' AS link
-              FROM base
-              ORDER BY sighting_count DESC, engagement_score DESC
-              LIMIT 20
-            )
-            SELECT * FROM shaped
-            UNION ALL
-            SELECT NULL AS sightings,
-                   NULL AS source,
-                   '(no resurfacing content matches this keyword)' AS title,
-                   NULL AS engagement,
-                   NULL AS first_seen,
-                   NULL AS last_seen,
-                   NULL AS explore,
-                   NULL AS link
-            WHERE (SELECT COUNT(*) FROM shaped) = 0
-          library: table
-
-        trend-matrix:
-          title: Trend matrix (volume x growth, week 2 onwards)
-          description: |
-            Becomes meaningful from week 2 as week-over-week data accumulates.
-            Quadrants: top-right = hot, top-left = emerging, bottom-right = established,
-            bottom-left = fading.
-          db: research
-          query: |
-            WITH this_week AS (
-              SELECT topic_id, COUNT(*) AS this_count
-              FROM findings
-              WHERE date(first_seen, 'localtime') >= date('now', 'localtime', '-7 days')
-                AND topic_id != 2 AND dismissed = 0
-                [[ AND source_title LIKE '%' || :keyword || '%' ]]
-              GROUP BY topic_id
-            ),
-            prev_week AS (
-              SELECT topic_id, COUNT(*) AS prev_count
-              FROM findings
-              WHERE date(first_seen, 'localtime') >= date('now', 'localtime', '-14 days')
-                AND date(first_seen, 'localtime') < date('now', 'localtime', '-7 days')
-                AND topic_id != 2 AND dismissed = 0
-                [[ AND source_title LIKE '%' || :keyword || '%' ]]
-              GROUP BY topic_id
-            )
-            SELECT t.name AS topic,
-                   COALESCE(tw.this_count, 0) AS volume,
-                   CASE
-                     WHEN COALESCE(pw.prev_count, 0) = 0 AND COALESCE(tw.this_count, 0) > 0 THEN 999
-                     WHEN COALESCE(pw.prev_count, 0) = 0 THEN 0
-                     ELSE ROUND(1.0 * COALESCE(tw.this_count, 0) / pw.prev_count, 2)
-                   END AS growth_ratio
-            FROM topics t
-            LEFT JOIN this_week tw ON tw.topic_id = t.id
-            LEFT JOIN prev_week pw ON pw.topic_id = t.id
-            WHERE t.id != 2
-          library: vega-lite
-          display:
-            mark: { type: point, tooltip: true, filled: true }
-            encoding:
-              x: { field: volume, type: quantitative, title: Findings this week }
-              y: { field: growth_ratio, type: quantitative, title: Growth ratio (this week / last week) }
-              color: { field: topic, type: nominal, title: Topic }
-              size: { field: volume, type: quantitative, legend: null }
 
         word-cloud:
           # EXPERIMENT: vega wordcloud transform with `interactive: true` at the
@@ -338,6 +215,222 @@ plugins:
                     fontSizeRange: [12, 56]
                     padding: 2
 
+        lifecycle-bubble:
+          # Talkwalker-style "Trend Analysis IQ" port. X = total findings ever
+          # (Emerging-to-Established axis). Y = this_week / last_week growth ratio
+          # (Falling-to-Rising axis). Bubble size = avg sighting_count (lifecycle
+          # depth: items that keep coming back). Until 2-3 weeks of cadence accumulate,
+          # most topics will sit at growth_ratio=999 (the sentinel for last_week=0),
+          # so today this chart reads as "emerging activity map," not lifecycle truth.
+          # Becomes the four-quadrant lifecycle view it's named for once cadence matures.
+          title: Lifecycle map - early cadence / emerging activity (matures with weekly cadence)
+          description: |
+            Each bubble is one topic. X-axis: total findings ever (left = Emerging,
+            right = Established). Y-axis: week-over-week growth ratio (low = Falling,
+            high = Rising); 999 means the topic had no findings in the previous week
+            so the ratio is unbounded - read those as "newly observed activity" rather
+            than "true growth." Bubble size: avg sighting_count, meaning how often
+            items in this topic get re-seen across runs. Honest framing: in week 1
+            this is an emerging-activity map. By week 3+ with scheduled weekly scans,
+            the four quadrants (Emerging+Rising = new hotness, Established+Rising =
+            mainstreaming, Established+Falling = peaking out, Emerging+Falling =
+            fading) start to mean what they say.
+          db: research
+          query: |
+            -- Same week-over-week math as trend-matrix (single mental model for the 999
+            -- sentinel) but using ALL-TIME findings on the X-axis rather than this_week,
+            -- so the chart positions topics along an Emerging-to-Established dimension
+            -- that survives cadence accumulation.
+            WITH this_week AS (
+              SELECT topic_id, COUNT(*) AS this_count
+              FROM findings
+              WHERE date(first_seen, 'localtime') >= date('now', 'localtime', '-7 days')
+                AND topic_id != 2 AND dismissed = 0
+                [[ AND source_title LIKE '%' || :keyword || '%' ]]
+              GROUP BY topic_id
+            ),
+            prev_week AS (
+              SELECT topic_id, COUNT(*) AS prev_count
+              FROM findings
+              WHERE date(first_seen, 'localtime') >= date('now', 'localtime', '-14 days')
+                AND date(first_seen, 'localtime') < date('now', 'localtime', '-7 days')
+                AND topic_id != 2 AND dismissed = 0
+                [[ AND source_title LIKE '%' || :keyword || '%' ]]
+              GROUP BY topic_id
+            ),
+            all_time AS (
+              SELECT topic_id, COUNT(*) AS total_count, AVG(sighting_count) AS avg_sightings
+              FROM findings
+              WHERE topic_id != 2 AND dismissed = 0
+                [[ AND source_title LIKE '%' || :keyword || '%' ]]
+              GROUP BY topic_id
+            )
+            SELECT t.name AS topic,
+                   COALESCE(at.total_count, 0) AS total_findings,
+                   CASE
+                     WHEN COALESCE(pw.prev_count, 0) = 0 AND COALESCE(tw.this_count, 0) > 0 THEN 999
+                     WHEN COALESCE(pw.prev_count, 0) = 0 THEN 0
+                     ELSE ROUND(1.0 * COALESCE(tw.this_count, 0) / pw.prev_count, 2)
+                   END AS growth_ratio,
+                   ROUND(COALESCE(at.avg_sightings, 1.0), 2) AS avg_sightings
+            FROM topics t
+            LEFT JOIN this_week tw ON tw.topic_id = t.id
+            LEFT JOIN prev_week pw ON pw.topic_id = t.id
+            LEFT JOIN all_time at ON at.topic_id = t.id
+            WHERE t.id != 2
+              AND COALESCE(at.total_count, 0) > 0
+            ORDER BY total_findings DESC
+          library: vega-lite
+          display:
+            mark: { type: circle, tooltip: true, opacity: 0.7 }
+            encoding:
+              x:
+                field: total_findings
+                type: quantitative
+                title: "Emerging (low) -- total findings ever -- Established (high)"
+              y:
+                field: growth_ratio
+                type: quantitative
+                title: "Falling (low) -- week-over-week ratio (999 = no prior week) -- Rising (high)"
+              size:
+                field: avg_sightings
+                type: quantitative
+                title: Avg sightings
+              color: { field: topic, type: nominal, title: Topic }
+
+        source-mix:
+          title: Source mix over time
+          db: research
+          query: |
+            SELECT date(first_seen, 'localtime') AS day,
+                   source,
+                   COUNT(*) AS findings
+            FROM findings
+            WHERE topic_id != 2 AND dismissed = 0
+              [[ AND topic_id = :topic ]]
+              [[ AND date(first_seen, 'localtime') >= date(:date_start) ]]
+              [[ AND source_title LIKE '%' || :keyword || '%' ]]
+            GROUP BY day, source
+            ORDER BY day, source
+          library: vega-lite
+          display:
+            mark: { type: area, tooltip: true }
+            encoding:
+              x: { field: day, type: temporal, title: Day }
+              y: { field: findings, type: quantitative, title: New findings, stack: zero }
+              color: { field: source, type: nominal, title: Source }
+
+        trend-matrix:
+          title: Trend matrix (volume x growth, week 2 onwards)
+          description: |
+            Becomes meaningful from week 2 as week-over-week data accumulates.
+            Quadrants: top-right = hot, top-left = emerging, bottom-right = established,
+            bottom-left = fading.
+          db: research
+          query: |
+            WITH this_week AS (
+              SELECT topic_id, COUNT(*) AS this_count
+              FROM findings
+              WHERE date(first_seen, 'localtime') >= date('now', 'localtime', '-7 days')
+                AND topic_id != 2 AND dismissed = 0
+                [[ AND source_title LIKE '%' || :keyword || '%' ]]
+              GROUP BY topic_id
+            ),
+            prev_week AS (
+              SELECT topic_id, COUNT(*) AS prev_count
+              FROM findings
+              WHERE date(first_seen, 'localtime') >= date('now', 'localtime', '-14 days')
+                AND date(first_seen, 'localtime') < date('now', 'localtime', '-7 days')
+                AND topic_id != 2 AND dismissed = 0
+                [[ AND source_title LIKE '%' || :keyword || '%' ]]
+              GROUP BY topic_id
+            )
+            SELECT t.name AS topic,
+                   COALESCE(tw.this_count, 0) AS volume,
+                   CASE
+                     WHEN COALESCE(pw.prev_count, 0) = 0 AND COALESCE(tw.this_count, 0) > 0 THEN 999
+                     WHEN COALESCE(pw.prev_count, 0) = 0 THEN 0
+                     ELSE ROUND(1.0 * COALESCE(tw.this_count, 0) / pw.prev_count, 2)
+                   END AS growth_ratio
+            FROM topics t
+            LEFT JOIN this_week tw ON tw.topic_id = t.id
+            LEFT JOIN prev_week pw ON pw.topic_id = t.id
+            WHERE t.id != 2
+          library: vega-lite
+          display:
+            mark: { type: point, tooltip: true, filled: true }
+            encoding:
+              x: { field: volume, type: quantitative, title: Findings this week }
+              y: { field: growth_ratio, type: quantitative, title: Growth ratio (this week / last week) }
+              color: { field: topic, type: nominal, title: Topic }
+              size: { field: volume, type: quantitative, legend: null }
+
+        resurfacing:
+          title: Resurfacing content (sighting_count > 1)
+          db: research
+          # The sentinel-UNION pattern (cf. `gone-quiet`) is now load-bearing here:
+          # before the keyword filter existed, this query couldn't return zero rows
+          # (any non-noise corpus had sighting_count > 1 entries). With ?keyword=foo
+          # the result set CAN be empty, and the table renderer crashes on empty
+          # results (`Object.keys(data.rows[0])` => TypeError). Sentinel guarantees
+          # one row.
+          query: |
+            -- `keyword_src` is source_title lowercased + leading article ("The "/"A "/"An ")
+            -- stripped, so the first word for rescoping is always the first NOUN-ish token.
+            -- The base CTE keeps row scoping (the optional :keyword WHERE block) in one
+            -- place; the final SELECT just shapes columns + builds anchors.
+            WITH base AS (
+              SELECT sighting_count, source, source_title, engagement_score,
+                     first_seen, last_seen, source_url,
+                     CASE
+                       WHEN lower(source_title) LIKE 'the %' THEN lower(substr(source_title, 5))
+                       WHEN lower(source_title) LIKE 'a %'   THEN lower(substr(source_title, 3))
+                       WHEN lower(source_title) LIKE 'an %'  THEN lower(substr(source_title, 4))
+                       ELSE lower(source_title)
+                     END AS keyword_src
+              FROM findings
+              WHERE sighting_count > 1
+                AND topic_id != 2
+                AND dismissed = 0
+                [[ AND topic_id = :topic ]]
+                [[ AND source_title LIKE '%' || :keyword || '%' ]]
+            ),
+            shaped AS (
+              SELECT sighting_count AS sightings,
+                     source,
+                     -- Strip < > \ per DESIGN.md rule 4 (innerHTML rendering); titles
+                     -- come from third-party APIs and could carry markup chars.
+                     replace(replace(replace(source_title, '<', ''), '>', ''), '\', '') AS title,
+                     ROUND(engagement_score, 1) AS engagement,
+                     date(first_seen, 'localtime') AS first_seen,
+                     date(last_seen, 'localtime') AS last_seen,
+                     -- Rescope-this-dashboard anchor: ?keyword=<first-word-of-title>.
+                     -- Percent-encode # & ? and spaces so hashtag/ampersand titles
+                     -- don't break the URL (e.g. "#torontorealestate" -> "%23...").
+                     '<a href="?keyword=' ||
+                       replace(replace(replace(replace(
+                         substr(keyword_src, 1, instr(keyword_src || ' ', ' ') - 1),
+                       '#', '%23'), '&', '%26'), '?', '%3F'), ' ', '%20') ||
+                       '" title="rescope dashboard to this word">explore</a>' AS explore,
+                     '<a href="' || replace(source_url, '"', '%22') ||
+                       '" target="_blank" rel="noopener">open</a>' AS link
+              FROM base
+              ORDER BY sighting_count DESC, engagement_score DESC
+              LIMIT 10
+            )
+            SELECT * FROM shaped
+            UNION ALL
+            SELECT NULL AS sightings,
+                   NULL AS source,
+                   '(no resurfacing content matches this keyword)' AS title,
+                   NULL AS engagement,
+                   NULL AS first_seen,
+                   NULL AS last_seen,
+                   NULL AS explore,
+                   NULL AS link
+            WHERE (SELECT COUNT(*) FROM shaped) = 0
+          library: table
+
         top-posts:
           title: Top posts (drill terminus)
           db: research
@@ -375,7 +468,7 @@ plugins:
                        '" target="_blank" rel="noopener">open</a>' AS "Link"
               FROM base
               ORDER BY sighting_count DESC, engagement_score DESC
-              LIMIT 20
+              LIMIT 10
             )
             SELECT * FROM shaped
             UNION ALL
