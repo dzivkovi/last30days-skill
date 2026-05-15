@@ -40,7 +40,7 @@ Three things this panel set deliberately *doesn't* include and why:
 
 ### Lifecycle map vs Trend matrix — when to use which
 
-Both charts use the same growth-ratio math (the same 999 sentinel for last_week=0) but plot a different X-axis. They answer related questions but are NOT redundant:
+The two charts share growth-ratio math and the 999 sentinel for last_week=0, but plot different X-axes:
 
 | Dimension | Lifecycle map (row 3) | Trend matrix (row 5) |
 |---|---|---|
@@ -50,7 +50,7 @@ Both charts use the same growth-ratio math (the same 999 sentinel for last_week=
 | Topics shown | Filtered to `total_findings > 0` | All topics, including zero-volume smoke tests |
 | Question it answers | "Where is each topic in its overall lifecycle?" | "How big and how growing is each topic this week?" |
 
-Keep both. The lifecycle map captures history-aware position; the trend matrix captures current-week snapshot. Either one alone leaves a blind spot.
+The lifecycle map captures history-aware position. The trend matrix captures current-week snapshot. They are complements, not duplicates.
 
 Three things this panel set deliberately *doesn't* include and why:
 
