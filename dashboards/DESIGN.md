@@ -16,18 +16,41 @@ If you're adding a new panel, the test is: **can a marketer answer a specific qu
 
 ---
 
-## Why these 8 panels (and not others)
+## Why these 9 panels (and not others)
 
-| # | Panel | Question answered in 5s | Why it earns its slot |
+Panels are listed in render order, top-to-bottom. Order matters: the YAML layout block controls intra-row pairing only — row sequence follows chart-definition order in the YAML.
+
+| Row | Panel | Question answered in 5s | Why it earns its slot |
 |---|---|---|---|
-| 1 | Findings this week | "Did anything happen?" | Hero metric. Orientation. One look tells you whether to keep scrolling. |
-| 2 | Buzz by day | "Heating or cooling, per topic?" | Volume-over-time is the spine of every commercial dashboard. Multi-line by topic so you see relative shape. |
-| 3 | Source mix over time | "Where's the conversation moving?" | Stacked area answers "is this trend Reddit-specific, or is it everywhere?" Clip a slice in your head; it's the platform-shift signal. |
-| 4 | Resurfacing content | "What stories keep coming back?" | `sighting_count > 1` rows. Same article showing up across feeds = compounding signal. The single highest-leverage panel for a marketer deciding what to amplify. |
-| 5 | Trend matrix ⭐ | "Which topic is *emerging*?" | 2D scatter (volume × growth-rate). Quadrant model: top-right hot, top-left emerging, bottom-right established, bottom-left fading. Becomes meaningful at week 2. |
-| 6 | Engagement-weighted top words | "What vocabulary dominates?" | Clickable navigation into the language of the corpus. Sized by `SUM(engagement)`, not raw frequency — high-engagement words are what's worth amplifying. |
-| 7 | Top posts | "Show me the actual content" | The drill terminus. Every other panel leads here. Sorted by `sighting_count, engagement` — recurring content first, viral one-hits second. |
-| 8 | Gone quiet | "Where did the conversation stop?" | Codex's surprise contribution. Silence ahead of an announcement is sometimes the strongest signal a marketer can act on. Becomes meaningful at week 3. |
+| 1 (L) | Findings this week | "Did anything happen?" | The BAN (Big-Ass Number) at the top-left. Orientation only. One look tells you whether to keep scrolling. |
+| 1 (R) | Buzz by day | "Heating or cooling, per topic?" | Volume-over-time is the spine of every commercial dashboard. Multi-line by topic so you see relative shape at a glance, paired with the BAN to anchor row 1. |
+| 2 | Engagement-weighted word cloud | "What vocabulary dominates?" | Promoted to row 2 because callers reach for vocabulary signal before drill-down. Sized by `SUM(engagement)`, not raw frequency — high-engagement words are what's worth amplifying. Clickable. |
+| 3 | Lifecycle map ⭐ | "Where is each topic along its lifecycle?" | Talkwalker-style bubble chart. X = total findings ever (Emerging → Established), Y = week-over-week growth ratio (Falling → Rising), size = avg sighting_count (stickiness). Four-quadrant lifecycle view that matures as cadence accumulates. Title labels current state honestly: "early cadence / emerging activity (matures with weekly cadence)." |
+| 4 | Source mix over time | "Where's the conversation moving?" | Stacked area answers "is this trend Reddit-specific, or is it everywhere?" Platform-shift signal. |
+| 5 | Trend matrix | "Which topic is hot *this week*?" | 2D scatter, this-week volume × growth ratio. Same growth-ratio math as the lifecycle map (one mental model for the 999 sentinel) but plots THIS week's findings on X — a current-snapshot complement to the lifecycle map's history-aware view. Quadrant labels: top-right hot, top-left emerging, bottom-right established, bottom-left fading. |
+| 6 | Resurfacing content | "What stories keep coming back?" | `sighting_count > 1` rows, capped to 10. Same article showing up across feeds = compounding signal. Drill-down for the visual-first panels above. |
+| 7 | Top posts | "Show me the actual content" | The drill terminus, capped to 10. Every other panel leads here. Sorted by `sighting_count, engagement` — recurring content first, viral one-hits second. |
+| 8 | Gone quiet | "Where did the conversation stop?" | Surprise contribution from the research pass. Silence ahead of an announcement is sometimes the strongest signal a marketer can act on. Becomes meaningful at week 3. |
+
+Three things this panel set deliberately *doesn't* include and why:
+
+- **Pie chart of source breakdown.** No time axis = no signal. Replaced with stacked area over time (row 4).
+- **Top 10 by raw engagement.** Engagement alone surfaces one-hit viral noise. The drill terminus (row 7) sorts by sighting first, engagement second — recurrence is a stronger signal than peak engagement.
+- **Sentiment chart.** Out of scope until the engine writes a sentiment field. Don't add a panel that requires data the schema doesn't carry.
+
+### Lifecycle map vs Trend matrix — when to use which
+
+Both charts use the same growth-ratio math (the same 999 sentinel for last_week=0) but plot a different X-axis. They answer related questions but are NOT redundant:
+
+| Dimension | Lifecycle map (row 3) | Trend matrix (row 5) |
+|---|---|---|
+| X-axis | **Total findings EVER** (cumulative since first scan) | **Findings THIS WEEK only** |
+| Y-axis | Week-over-week growth ratio (same formula) | Same |
+| Bubble size | Avg sighting_count (lifecycle depth) | This-week volume (matches X) |
+| Topics shown | Filtered to `total_findings > 0` | All topics, including zero-volume smoke tests |
+| Question it answers | "Where is each topic in its overall lifecycle?" | "How big and how growing is each topic this week?" |
+
+Keep both. The lifecycle map captures history-aware position; the trend matrix captures current-week snapshot. Either one alone leaves a blind spot.
 
 Three things this panel set deliberately *doesn't* include and why:
 
@@ -133,19 +156,23 @@ The script (1) parses `dashboards/trends.yaml`, (2) strips the `[[ AND ... ]]` b
 
 If the result might be empty, use the `gone-quiet` UNION-sentinel pattern (rule 3).
 
-**Step 4 — Add the panel to the layout grid:**
+**Step 4 — Add the panel to the layout grid AND reorder chart definitions if needed:**
 
 ```yaml
       layout:
         - [findings-this-week, findings-this-week, buzz-by-day, buzz-by-day, buzz-by-day, buzz-by-day]
+        - [word-cloud, word-cloud, word-cloud, word-cloud, word-cloud, word-cloud]
+        - [lifecycle-bubble, lifecycle-bubble, lifecycle-bubble, lifecycle-bubble, lifecycle-bubble, lifecycle-bubble]
         - [source-mix, source-mix, source-mix, source-mix, source-mix, source-mix]
-        - [resurfacing, resurfacing, resurfacing, trend-matrix, trend-matrix, trend-matrix]
-        - [top-authors, top-authors, top-authors, word-cloud, word-cloud, word-cloud]   # NEW row
+        - [trend-matrix, top-authors, top-authors, top-authors, trend-matrix, trend-matrix]  # NEW panel paired with trend-matrix
+        - [resurfacing, resurfacing, resurfacing, resurfacing, resurfacing, resurfacing]
         - [top-posts, top-posts, top-posts, top-posts, top-posts, top-posts]
         - [gone-quiet, gone-quiet, gone-quiet, gone-quiet, gone-quiet, gone-quiet]
 ```
 
 The grid is 6 columns wide; each row of the YAML is a row of the dashboard, repeating an id N times to make a panel N columns wide. `[a, a, a, b, b, b]` = two equal-width panels in one row.
+
+**Important plugin quirk**: datasette-dashboards 0.8.0 honors the `layout` block for **intra-row pairing** (which charts share a row) but **renders rows in chart-definition order**, not in layout-array order. To move a panel to a different ROW, you must also reorder its definition in the `charts:` block. The `layout` block alone is not sufficient — verify by hitting `/-/metadata.json` if a layout edit appears to do nothing.
 
 **Step 5 — Smoke-test the rendered dashboard:**
 
@@ -275,18 +302,55 @@ The dark-factory overnight run that built this dashboard found two P0 bugs at la
 | Anchor cells render as broken HTML (`>open<` showing as text) | A `"` survived in `source_url` and broke the surrounding `<a href="...">` | Add `replace(source_url, '"', '%22')` to the cell expression |
 | Filter dropdown changes don't propagate to a panel | Panel SQL forgot the `[[ AND topic_id = :topic ]]` block | Add the optional-WHERE block to the WHERE clause |
 | Datasette won't see new findings without a restart | Rare on Linux/macOS, occasional on Windows when SQLite locking gets weird | Stop datasette (`taskkill //F //PID <pid>`) and relaunch |
+| YAML edits to `dashboards/trends.yaml` don't take effect after save | Datasette caches metadata at startup — the running process is using the YAML it loaded when it launched | Kill the datasette process and relaunch. Verify the new metadata is live by hitting `http://localhost:8002/-/metadata.json` — if your changes don't appear there, the old process is still serving |
+| Datasette crashes on startup with `UnicodeDecodeError: 'charmap' codec can't decode byte` (Windows) | Python defaults to the system codec (cp1252 on Windows) when reading the metadata YAML. Any non-ASCII character — em-dash, smart quotes, arrows, accented letters — triggers this | Set `PYTHONUTF8=1` before the datasette command: `PYTHONUTF8=1 datasette ... -m dashboards/trends.yaml --port 8002`. As a fallback, keep the YAML strictly ASCII (use ` - ` instead of `—`, `<-` instead of `←`, etc.) |
+| Reordering rows in the `layout:` block has no effect on row order | datasette-dashboards 0.8.0 uses `layout:` for intra-row pairing only; row sequence follows chart-definition order in the `charts:` block | Reorder the chart definitions themselves in the YAML to match the desired visual row order. The `layout:` array still controls which charts share a row (and column widths within a row) |
 | Today's findings show up under tomorrow's date | SQLite `datetime('now')` is **UTC**, not local; the engine stores UTC. An 8 PM EDT ingestion stamps `2026-05-07 00:00 UTC` and gets bucketed to "tomorrow" if the panel uses bare `date(first_seen)` | Wrap every date column in `date(col, 'localtime')` for display; compare with `date('now', 'localtime', '-N days')` on **both** sides of the comparison. Storage stays UTC (correct as a canonical convention); display localizes |
 | Clicking a word in the cloud goes nowhere | The wordcloud uses `library: vega` + the wordcloud transform with `interactive: true` at the mark level — vega installs the click handler at runtime via JS, not via SVG `<a>` wrappers, so the rendered SVG stays clean (just `<text>` elements). If your DOM inspector shows zero `<a>` tags inside the cloud, that's normal — clicks still fire. Real symptom: the URL doesn't change when you click. Likely cause: the `href` channel isn't bound to the data column, or `interactive: true` was dropped from the mark | Confirm `marks[0].interactive: true` is set, the SQL emits a `href` column (build it with `replace()` chains in SQL — vega's expression language doesn't expose `encodeURIComponent`), and the encode block has `href: { field: href }` in both `enter` and `update`. Click test in a real browser (NOT a static DOM probe — Playwright's headless DOM inspection won't see vega's runtime click handlers) |
 | `?keyword=fakekeyword_no_results` crashes the `resurfacing` or `top-posts` panel with `TypeError: Cannot convert undefined or null to object` | The keyword filter narrowed the result set to zero rows; the table renderer crashed on `Object.keys(data.rows[0])` (rule 3 again — the same crash mode that hits `gone-quiet`). Pre-keyword, these panels couldn't return zero rows so the sentinel pattern wasn't needed | Wrap the main SELECT in a `shaped` CTE and `UNION ALL` a sentinel row guarded by `WHERE (SELECT COUNT(*) FROM shaped) = 0`. Mirror the column count + types of the real query so the renderer sees the same column-key surface |
 | Clicking a word resets the `topic` and `From date` filters | The vega `href` signal builds a fresh URL (`'?keyword=' + ...`) instead of merging into the current `window.location.search`, so other filters reset to defaults | Known v1 limitation. Filter preservation needs a vega signal that reads `window.location.search` and re-emits the merged query string — deferred to a future iteration. Workaround: the user re-applies their `topic` / `date_start` after a click |
 
-These are tracked in [PR #2 open questions](https://github.com/dzivkovi/last30days-skill/pull/2). They're listed here so a future maintainer doesn't think they're forgotten — they're explicit deferrals waiting for the data to demand them:
+---
+
+## Roadmap — toward design discipline
+
+This dashboard is a strong v1. It implements the high-leverage information-design principles that separate working dashboards from data dumps: a BAN metric in the orientation slot, glance-scan-elaborate hierarchy, visual-first row order, honest titles that don't oversell the data, sparse-by-design panels labeled as such. Three established practices remain unimplemented and are tracked here as the next iteration boundary.
+
+### Next chapter: storytelling with data
+
+Static chart titles describe what the chart plots. Great titles state what the reader should take away from the plot. The difference looks small in writing and large in practice:
+
+| Title style | Example |
+|---|---|
+| Descriptive (current) | "Buzz by day" |
+| Storytelling (next) | "Toronto real estate spiked May 9 — biggest single-day count this month" |
+
+Implementing storytelling titles requires the title to update with the data, which means computing the headline phrase in SQL and binding it to a metric panel near the top of the dashboard. The pattern is not trivial — it requires deciding what counts as "the story" for any given week — but the payoff is a dashboard that tells the marketer what to act on without requiring them to read every chart.
+
+A reasonable first step: add a `daily-headline` metric panel between row 1 and row 2, whose query selects the most notable (topic, day) pair from the last 7 days and renders it as `"<topic> spiked <date> — <volume> findings"`. The SQL is straightforward; the editorial judgment about what "notable" means is the real work.
+
+### Next chapter: color discipline
+
+The current dashboard uses Vega's default categorical palette — every topic gets a distinct color. This produces visual noise: lots of color, little signal. The discipline favored by Knaflic and others is grayscale baseline with one accent color reserved for the metric or topic you want the reader's eye drawn to. Apply this by:
+
+1. Setting an explicit `color: { value: "#888" }` (gray) as the default in vega-lite encodings
+2. Conditionally overriding to an accent color when a topic crosses a threshold (e.g. `topic == 'Toronto real estate'` for the dashboard's primary beat, or `growth_ratio < 0.5` for falling topics)
+
+This converts color from decoration into emphasis — a single red bubble in a sea of gray reads louder than 9 differently-colored bubbles.
+
+### Next chapter: audience separation
+
+A dashboard serving two audiences splits its design attention between them. The current dashboard tracks both client-domain research (real estate beats) and ecosystem signal (the skill's own discoverability). These two audiences read the dashboard differently and respond to different metrics. The principled split is to clone `trends.yaml` to `client-research.yaml` and `ecosystem-tracking.yaml`, each tuned to its scenario with different filter defaults, different panel emphasis, and different titles. This is straightforward mechanically but requires resolving which panels go to which dashboard — worth doing once usage patterns substantiate two distinct read habits.
+
+### Deferred technical work
+
+These are tracked in [PR #2 open questions](https://github.com/last30days-skill/pull/2) for when the data demands them:
 
 1. **Wordcloud SQL at 50k findings.** The 5-CTE chain + `json_each` explosion will be the tail-latency outlier. The fix is a materialized `findings_words` precompute table refreshed on insert. Worth doing once the corpus hits ~10k findings and you can measure actual slowness.
-2. **Index on `findings(dismissed, first_seen)`.** Six of eight panels do range scans on `first_seen`. The schema is owned by the engine (`scripts/store.py`), not the dashboard. Worth a separate engine-side PR.
-3. **`gone-quiet` correlated-subquery rewrite.** Four correlated subqueries per row → straight GROUP BY + JOINs. ~30 lines of SQL refactor, not blocking at 259 findings.
+2. **Index on `findings(dismissed, first_seen)`.** Six of nine panels do range scans on `first_seen`. The schema is owned by the engine (`scripts/store.py`), not the dashboard. Worth a separate engine-side PR.
+3. **`gone-quiet` correlated-subquery rewrite.** Four correlated subqueries per row → straight GROUP BY + JOINs. ~30 lines of SQL refactor, not blocking at current corpus size.
 4. **Stopword list drift detector.** No automated check links the inline source/jargon stopwords to the engine modules they mirror. A 5-line python test could parse the YAML and assert the source-name list ⊆ `lib/sources` enum. Worth adding when any other Python testing is added.
-5. **Cross-panel filter parameters.** Clicking a word in the cloud should filter top-posts to findings containing that word. Currently each panel has independent state.
+5. **Cross-panel filter parameters.** Clicking a word in the cloud should compose with the existing `topic` / `date_start` filters rather than resetting them. Currently each click rebuilds the URL from scratch.
 
 ---
 
@@ -295,6 +359,6 @@ These are tracked in [PR #2 open questions](https://github.com/dzivkovi/last30da
 - [`README.md`](README.md) — launch + filter + panel descriptions (user-facing)
 - [`../CLAUDE.md`](../CLAUDE.md) — `Dashboards conventions` block (agent-facing)
 - [`scripts/sql-dryrun.py`](scripts/sql-dryrun.py) — automated SQL smoke test
-- `../work/2026-05-05/17-trends-dashboard-synthesis-three-agents.md` — research that informed the panel selection
-- `../work/2026-05-05/18-overnight-dark-factory-primer.md` — the spec the build executed against
+- *The Big Book of Dashboards* (Wexler, Shaffer, Cotgreave, Wiley 2017) — the source for the BAN, glance-scan-elaborate, and quadrant-scatter patterns used in this dashboard
+- *Storytelling with Data: Let's Practice!* (Knaflic, Wiley) — the source for the title-as-takeaway, color discipline, and clutter-elimination practices in the Roadmap
 - [datasette-dashboards 0.8.0](https://github.com/rclement/datasette-dashboards) — upstream plugin
