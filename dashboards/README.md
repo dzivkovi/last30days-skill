@@ -2,16 +2,17 @@
 
 A nine-panel [datasette-dashboards](https://github.com/rclement/datasette-dashboards) YAML on top of the `--store` SQLite file at `~/.local/share/last30days/research.db`. Designed for a non-BI marketing user — every chart is a navigation widget into the underlying findings, not a standalone report.
 
-## Design philosophy
+## Design decisions
 
-This dashboard follows established information-design principles. Read time matters more than chart count, so the layout is organized around the **glance → scan → elaborate** hierarchy familiar to readers of *The Big Book of Dashboards* (Wexler, Shaffer, Cotgreave) and *Storytelling with Data* (Knaflic):
+A handful of choices, easy to verify by opening the dashboard:
 
-- **A Big-Ass Number (BAN) sits in the top-left** as the orientation metric. One look tells you whether to keep scrolling.
-- **Visuals occupy the upper half**, ranked by how often the user reaches for them. The word cloud earned the row-2 slot because callers actively seek vocabulary signal before drill-down detail.
-- **Text tables are demoted below visuals** because reading them is high-cognitive-cost; their job is drilldown after a visual has narrowed the scope.
-- **Chart titles state behavior honestly** — for example, the lifecycle bubble is named `"Lifecycle map — early cadence / emerging activity (matures with weekly cadence)"` because a Y=999 sentinel dominates the chart until two weeks of cadence accumulate. Titles that lie about what the data can show, do not belong in production dashboards.
+- **Row 1, top-left: one big number.** "312 new findings" earns the most-attention slot because the first question every reader asks is "is anything happening this week?"
+- **Row 2: the word cloud, not the source breakdown.** Users reach for vocabulary signal before drill-down detail, so the cloud is the second thing the eye lands on rather than the fourth.
+- **Rows 3-5: scatters and stacked areas, not tables.** High-density visuals occupy the middle of the page where attention is still fresh.
+- **Rows 6-8: text tables, capped to 10 rows each.** Tables are drilldown, not orientation; they earn their place at the bottom of the scroll.
+- **Every chart title states behavior, not just identity.** The lifecycle map is titled `"Lifecycle map — early cadence / emerging activity (matures with weekly cadence)"` because a Y=999 sentinel dominates the chart for the first two weeks of cadence; the title warns of that rather than overpromising lifecycle truth the data can't yet support.
 
-These principles produce a dashboard you can read in 30 seconds for triage and re-read in 5 minutes for detail.
+The result reads in 30 seconds for triage and 5 minutes for detail. The lineage is *The Big Book of Dashboards* (Wexler, Shaffer, Cotgreave) and *Storytelling with Data* (Knaflic) — the decisions above are what those principles look like when made concrete against a SQLite-backed research engine.
 
 ## Launch
 
