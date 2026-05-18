@@ -33,7 +33,7 @@ Each run produces one file per topic, slug-named:
 
 ```bash
 # ~/.config/last30days/.env
-LAST30DAYS_MEMORY_DIR=$HOME/Documents/Last30Days                  # POSIX
+LAST30DAYS_MEMORY_DIR=$HOME/Documents/Last30Days                  # POSIX — defaults to this path when unset
 LAST30DAYS_MEMORY_DIR=C:\Users\<user>\Documents\Last30Days        # Windows
 ```
 
