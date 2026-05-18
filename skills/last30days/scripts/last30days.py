@@ -565,6 +565,14 @@ def main() -> int:
 
     config = env.get_config()
 
+    # Env-var fallback for --save-dir, mirroring the LAST30DAYS_STORE pattern below.
+    # `is None` (not `not args.save_dir`) so an explicit `--save-dir ""` still suppresses save.
+    if args.save_dir is None:
+        args.save_dir = (
+            os.environ.get("LAST30DAYS_MEMORY_DIR")
+            or config.get("LAST30DAYS_MEMORY_DIR")
+        )
+
     # Surface SSH-routing config as an env var so library modules (e.g.
     # youtube_yt) can read it without taking a config dependency. This
     # routes yt-dlp through `ssh <host>` to bypass YouTube's bot-wall on
