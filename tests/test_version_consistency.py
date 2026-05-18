@@ -62,7 +62,7 @@ class TestVersionConsistency(unittest.TestCase):
         offenders = []
 
         raw = subprocess.check_output(
-            ["git", "ls-files", "-z"], cwd=str(ROOT), text=True
+            ["git", "ls-files", "-z"], cwd=str(ROOT), text=True, encoding="utf-8"
         )
         tracked = [entry for entry in raw.split("\0") if entry]
 
