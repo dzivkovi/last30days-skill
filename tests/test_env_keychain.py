@@ -24,6 +24,14 @@ from lib import env  # noqa: E402
 
 SETUP_KEYCHAIN_SH = Path(__file__).resolve().parents[1] / "skills" / "last30days" / "scripts" / "setup-keychain.sh"
 
+# Tests below exercise `_load_keychain`'s Darwin path (via `mock.patch("platform.system", return_value="Darwin")`),
+# which performs `import pwd` inside the function. `pwd` is a POSIX-only stdlib module and does not exist on Windows,
+# so these tests fail with ModuleNotFoundError when run on Windows even though the actual platform check is mocked.
+requires_pwd_module = pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="Mocked Darwin path triggers `import pwd`, which is POSIX-only stdlib",
+)
+
 
 # ---------------------------------------------------------------------------
 # _load_keychain unit tests
@@ -45,6 +53,7 @@ def _run_result(returncode: int, stdout: str = "") -> subprocess.CompletedProces
     return subprocess.CompletedProcess(args=[], returncode=returncode, stdout=stdout, stderr="")
 
 
+@requires_pwd_module
 def test_load_keychain_loads_present_keys_skips_missing():
     def fake_run(cmd, **kwargs):
         service = cmd[cmd.index("-s") + 1]
@@ -62,6 +71,7 @@ def test_load_keychain_loads_present_keys_skips_missing():
     assert result == {"XAI_API_KEY": "xai-abc", "BRAVE_API_KEY": "brv-xyz"}
 
 
+@requires_pwd_module
 def test_load_keychain_strips_whitespace_and_newlines():
     with mock.patch("platform.system", return_value="Darwin"), \
          mock.patch("shutil.which", return_value="/usr/bin/security"), \
@@ -70,6 +80,7 @@ def test_load_keychain_strips_whitespace_and_newlines():
     assert result == {"FOO": "hello-key"}
 
 
+@requires_pwd_module
 def test_load_keychain_swallows_subprocess_errors():
     def fake_run(cmd, **kwargs):
         raise subprocess.TimeoutExpired(cmd=cmd, timeout=5)
@@ -80,6 +91,7 @@ def test_load_keychain_swallows_subprocess_errors():
         assert env._load_keychain(["XAI_API_KEY"]) == {}
 
 
+@requires_pwd_module
 def test_load_keychain_swallows_oserror():
     with mock.patch("platform.system", return_value="Darwin"), \
          mock.patch("shutil.which", return_value="/usr/bin/security"), \
@@ -87,6 +99,7 @@ def test_load_keychain_swallows_oserror():
         assert env._load_keychain(["XAI_API_KEY"]) == {}
 
 
+@requires_pwd_module
 def test_load_keychain_skips_empty_stdout():
     with mock.patch("platform.system", return_value="Darwin"), \
          mock.patch("shutil.which", return_value="/usr/bin/security"), \
