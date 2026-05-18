@@ -28,8 +28,11 @@ Each run produces one file per topic, slug-named:
 `<slug>-raw[-suffix].md`. Same topic + same suffix on the same day overwrites; same topic + same suffix on different days appends a date stamp.
 
 **Per-run overrides:**
-- `--save-dir <path>` - one-off output location.
+
+- `--save-dir <path>` - one-off output location. **Flag wins over env var.** If neither flag nor env var is set, the engine does not write a file (DB persistence is independent — see `LAST30DAYS_STORE` below).
 - `--save-suffix <name>` - distinguish runs of the same topic (e.g. per client: `--save-suffix=acme`).
+
+**Direct CLI invocation honors the env var too.** Agents that shell out to `python3 scripts/last30days.py ...` without `--save-dir` will still write to `$LAST30DAYS_MEMORY_DIR` when set (mirrors the `LAST30DAYS_STORE` env-or-flag convention). Previously the env var was only respected by the SKILL.md wrapper; direct calls silently no-op'd the file save.
 
 The footer line `📎 Raw results saved to ${LAST30DAYS_MEMORY_DIR:-$HOME/Documents/Last30Days}/<slug>-raw.md` is the canonical pointer; if it shows backslashes on Windows update past v3.1.1.
 
