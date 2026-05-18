@@ -140,13 +140,12 @@ class EvaluatorV3Tests(unittest.TestCase):
 
     def test_create_eval_env_and_run_last30days(self):
         with mock.patch.object(evaluator.envlib, "get_config", return_value={"OPENAI_API_KEY": "config-openai"}):
-            with mock.patch.dict("os.environ", {"PATH": "/bin", "GOOGLE_API_KEY": "env-google"}, clear=False):
-                # Clear any real OPENAI_API_KEY from env so the config mock's
-                # placeholder is observable. Without this, a developer with a
-                # real OPENAI_API_KEY in their .env sees the assertion fail
-                # against their actual key value - both a test failure and
-                # a secret leak via AssertionError diff output.
-                os.environ.pop("OPENAI_API_KEY", None)
+            # clear=True gives the test a hermetic env: only PATH and
+            # GOOGLE_API_KEY exist for the duration. Without it, any real
+            # API key in the developer's `.env` (OPENAI, ANTHROPIC, GEMINI,
+            # SCRAPECREATORS, etc.) leaks through `os.environ` and can
+            # surface in AssertionError diff output if expectations diverge.
+            with mock.patch.dict("os.environ", {"PATH": "/bin", "GOOGLE_API_KEY": "env-google"}, clear=True):
                 created = evaluator.create_eval_env()
         self.assertEqual("/bin", created["PATH"])
         self.assertEqual("env-google", created["GOOGLE_API_KEY"])
