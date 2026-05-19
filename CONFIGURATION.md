@@ -33,9 +33,11 @@ Each run produces one file per topic, slug-named:
 
 ```bash
 # ~/.config/last30days/.env
-LAST30DAYS_MEMORY_DIR=$HOME/Documents/Last30Days                  # POSIX — defaults to this path when unset
+LAST30DAYS_MEMORY_DIR=~/Documents/Last30Days                      # POSIX — defaults to this path when unset
 LAST30DAYS_MEMORY_DIR=C:\Users\<user>\Documents\Last30Days        # Windows
 ```
+
+The engine's `.env` reader doesn't expand `$HOME` — only the tilde, via `Path().expanduser()` downstream. Use `~/...` or an absolute path; **don't** write the literal string `$HOME/...` into your `.env` (it gets stored verbatim and breaks path resolution).
 
 **Per-run overrides:**
 
