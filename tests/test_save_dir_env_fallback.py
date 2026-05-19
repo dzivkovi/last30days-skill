@@ -14,6 +14,7 @@ Issue: https://github.com/dzivkovi/last30days-skill/issues/8
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -66,6 +67,9 @@ class SaveDirEnvFallbackTests(unittest.TestCase):
         self.config_dir.mkdir()
         self.save_target = self.tmp / "Last30Days"
         self.save_target.mkdir()
+
+    def tearDown(self) -> None:
+        shutil.rmtree(self.tmp, ignore_errors=True)
 
     def _write_dotenv(self, contents: str) -> None:
         (self.config_dir / ".env").write_text(contents, encoding="utf-8")
@@ -164,6 +168,29 @@ class SaveDirEnvFallbackTests(unittest.TestCase):
         self.assertEqual(
             len(files), 0,
             msg="Explicit empty --save-dir was overridden by env var fallback — `is None` check broken.",
+        )
+
+    def test_shell_empty_env_var_overrides_dotenv_value(self) -> None:
+        """LAST30DAYS_MEMORY_DIR='' in shell suppresses save even when .env has a value.
+
+        Without `is not None` semantics at the env layer, the empty shell export
+        would silently fall through to the .env value (the `or` operator treats
+        '' and None identically). This pins the env-over-config-when-explicit rule.
+        """
+        self._write_dotenv(f"LAST30DAYS_MEMORY_DIR={self.save_target}\n")
+        result = _run_engine(
+            topic="OpenAI",
+            extra_argv=[],
+            env_overrides={
+                "LAST30DAYS_CONFIG_DIR": str(self.config_dir),
+                "LAST30DAYS_MEMORY_DIR": "",
+            },
+        )
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        files = sorted(self.save_target.glob("*.md"))
+        self.assertEqual(
+            len(files), 0,
+            msg="Shell-empty env var must suppress save even when .env has a value.",
         )
 
     def test_env_var_pointing_to_nonexistent_dir_creates_it(self) -> None:
