@@ -564,12 +564,13 @@ def main() -> int:
     config = env.get_config()
 
     # Env-var fallback for --save-dir, mirroring the LAST30DAYS_STORE pattern below.
-    # `is None` (not `not args.save_dir`) so an explicit `--save-dir ""` still suppresses save.
+    # Uses `is None` / `is not None` checks (not truthy `or`) at every layer so that
+    # `--save-dir ""`, `LAST30DAYS_MEMORY_DIR=""` (shell-export-empty), and explicit
+    # absence each correctly suppress save. An `or` chain would collapse the empty
+    # shell-export into the same path as unset, silently falling through to .env.
     if args.save_dir is None:
-        args.save_dir = (
-            os.environ.get("LAST30DAYS_MEMORY_DIR")
-            or config.get("LAST30DAYS_MEMORY_DIR")
-        )
+        env_val = os.environ.get("LAST30DAYS_MEMORY_DIR")
+        args.save_dir = env_val if env_val is not None else config.get("LAST30DAYS_MEMORY_DIR")
 
     # Surface SSH-routing config as an env var so library modules (e.g.
     # youtube_yt) can read it without taking a config dependency. This
