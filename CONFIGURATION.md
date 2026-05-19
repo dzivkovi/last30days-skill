@@ -27,8 +27,21 @@ This is a focused **configuration reference** maintained alongside the engine. T
 Each run produces one file per topic, slug-named:
 `<slug>-raw[-suffix].md`. Same topic + same suffix on the same day overwrites; same topic + same suffix on different days appends a date stamp.
 
+### Recommended `.env` entry
+
+`.env` files don't travel between machines or harnesses, so set `LAST30DAYS_MEMORY_DIR` explicitly in `~/.config/last30days/.env` once per host. The `/last30days` slash command works without it (the SKILL.md wrapper has its own default), but **bare engine invocations** — `python3 scripts/last30days.py ...` from cron jobs, scripts, or agents that bypass the wrapper — silently no-op the file save unless the engine sees the env var. Mirrors the `LAST30DAYS_STORE` env-or-flag convention.
+
+```bash
+# ~/.config/last30days/.env
+LAST30DAYS_MEMORY_DIR=~/Documents/Last30Days                      # POSIX — defaults to this path when unset
+LAST30DAYS_MEMORY_DIR=C:\Users\<user>\Documents\Last30Days        # Windows
+```
+
+The engine's `.env` reader doesn't expand `$HOME` — only the tilde, via `Path().expanduser()` downstream. Use `~/...` or an absolute path; **don't** write the literal string `$HOME/...` into your `.env` (it gets stored verbatim and breaks path resolution).
+
 **Per-run overrides:**
-- `--save-dir <path>` - one-off output location.
+
+- `--save-dir <path>` - one-off output location. **Flag wins over env var.** If neither flag nor env var is set, the engine does not write a file (DB persistence is independent — see `LAST30DAYS_STORE` below).
 - `--save-suffix <name>` - distinguish runs of the same topic (e.g. per client: `--save-suffix=acme`).
 
 The footer line `📎 Raw results saved to ${LAST30DAYS_MEMORY_DIR:-$HOME/Documents/Last30Days}/<slug>-raw.md` is the canonical pointer; if it shows backslashes on Windows update past v3.1.1.

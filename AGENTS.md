@@ -18,7 +18,9 @@ Agent Skills package for researching any topic across Reddit, X, YouTube, and we
 
 ## Commands
 ```bash
-# Dev/fallback: direct engine invocation (scripting, cron, or engine testing only)
+# Dev/fallback: direct engine invocation (scripting, cron, or engine testing only).
+# Saves to $LAST30DAYS_MEMORY_DIR when set in shell or ~/.config/last30days/.env;
+# add --save-dir <path> for a one-off override. Mirrors LAST30DAYS_STORE convention.
 python3 skills/last30days/scripts/last30days.py "test query" --emit=compact
 npx skills add . -g -y   # one-time: symlink this repo into every detected harness's skill dir
 
