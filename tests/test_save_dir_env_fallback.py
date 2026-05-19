@@ -14,6 +14,7 @@ Issue: https://github.com/dzivkovi/last30days-skill/issues/8
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -66,6 +67,9 @@ class SaveDirEnvFallbackTests(unittest.TestCase):
         self.config_dir.mkdir()
         self.save_target = self.tmp / "Last30Days"
         self.save_target.mkdir()
+
+    def tearDown(self) -> None:
+        shutil.rmtree(self.tmp, ignore_errors=True)
 
     def _write_dotenv(self, contents: str) -> None:
         (self.config_dir / ".env").write_text(contents, encoding="utf-8")
