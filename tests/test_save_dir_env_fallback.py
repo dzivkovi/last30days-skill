@@ -170,6 +170,29 @@ class SaveDirEnvFallbackTests(unittest.TestCase):
             msg="Explicit empty --save-dir was overridden by env var fallback — `is None` check broken.",
         )
 
+    def test_shell_empty_env_var_overrides_dotenv_value(self) -> None:
+        """LAST30DAYS_MEMORY_DIR='' in shell suppresses save even when .env has a value.
+
+        Without `is not None` semantics at the env layer, the empty shell export
+        would silently fall through to the .env value (the `or` operator treats
+        '' and None identically). This pins the env-over-config-when-explicit rule.
+        """
+        self._write_dotenv(f"LAST30DAYS_MEMORY_DIR={self.save_target}\n")
+        result = _run_engine(
+            topic="OpenAI",
+            extra_argv=[],
+            env_overrides={
+                "LAST30DAYS_CONFIG_DIR": str(self.config_dir),
+                "LAST30DAYS_MEMORY_DIR": "",
+            },
+        )
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        files = sorted(self.save_target.glob("*.md"))
+        self.assertEqual(
+            len(files), 0,
+            msg="Shell-empty env var must suppress save even when .env has a value.",
+        )
+
     def test_env_var_pointing_to_nonexistent_dir_creates_it(self) -> None:
         """save_output calls mkdir(parents=True, exist_ok=True); env-var path should too."""
         deep_target = self.tmp / "does" / "not" / "exist" / "yet"
