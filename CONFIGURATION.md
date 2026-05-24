@@ -157,12 +157,13 @@ Adding `--store` to any run persists every finding to a SQLite database (default
 
 **Always-on alternative:** set `LAST30DAYS_STORE=1` in your `.env` instead of remembering `--store` on every invocation. The flag still works as before; the env var is purely additive. Same hybrid pattern as `LAST30DAYS_DEBUG` — works whether shell-exported or in `.env`.
 
-**Custom store location (`--db` / `LAST30DAYS_DB_PATH`):** by default `--store` writes to the shared `~/.local/share/last30days/research.db`. Orchestrators that wrap the engine (e.g., `/landscape` fanning 6 spokes × N entities) often want per-engagement persistence so concurrent runs don't intermix with standalone `/last30days` history. Two equivalent routes:
+**Custom store location (`--db` / `LAST30DAYS_DB_PATH`):** by default `--store` writes to the shared `~/.local/share/last30days/research.db`. Orchestrators that wrap the engine (e.g., `/landscape` fanning 6 spokes × N entities) often want per-engagement persistence so concurrent runs don't intermix with standalone `/last30days` history. Two routes, in precedence order (highest wins):
 
-- `--db <path>` per-run override (highest precedence).
-- `LAST30DAYS_DB_PATH=<path>` env var (next precedence) — set in the shell of a subprocess invocation, or globally in `~/.config/last30days/.env` for a permanent re-route.
+1. `--db <path>` per-run override on the engine. Honored only by `last30days.py`.
+2. `LAST30DAYS_DB_PATH=<path>` in the **process environment** (i.e., shell-exported). Honored by `last30days.py`, `briefing.py`, and `watchlist.py` because `store._get_db_path()` reads `os.environ` directly.
+3. `LAST30DAYS_DB_PATH=<path>` in `~/.config/last30days/.env`. Honored only by `last30days.py` (which calls `env.get_config()` to merge the dotenv into config). `briefing.py` and `watchlist.py` do not read the dotenv on their own; if you want them on the same custom store, either shell-export the env var into their invocation environment (cron / launchd / systemd unit file), or run them under `LAST30DAYS_DB_PATH=/path/to/db python3 scripts/briefing.py …`.
 
-Empty env values fall back to the default (DB persistence has no natural "off" state when `--store` is active). `briefing.py` and `watchlist.py` honor `LAST30DAYS_DB_PATH` too because they all funnel through the same `store._get_db_path()` resolver.
+Empty env values fall back to the default (DB persistence has no natural "off" state when `--store` is active).
 
 Relevant tables: `topics`, `research_runs`, `findings`, `settings`. Schema: [`scripts/store.py`](skills/last30days/scripts/store.py).
 

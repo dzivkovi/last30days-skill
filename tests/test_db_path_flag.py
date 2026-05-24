@@ -140,6 +140,41 @@ class GetDbPathResolverTests(unittest.TestCase):
         resolved = store._get_db_path()
         self.assertEqual(resolved, Path.home() / "never-actually-used.db")
 
+    def test_get_db_path_does_not_read_dotenv_directly(self) -> None:
+        """store._get_db_path() honors process env only, not ~/.config/last30days/.env.
+
+        Pinning the explicit contract documented in CONFIGURATION.md: the
+        engine's ``last30days.py main()`` is what reads ``env.get_config()``
+        and merges the dotenv into ``LAST30DAYS_DB_PATH`` resolution. Sibling
+        scripts like ``briefing.py`` and ``watchlist.py`` call
+        ``store._get_db_path()`` directly without going through that merge,
+        so they pick up shell-exported env vars but NOT dotenv-supplied ones.
+
+        If a future refactor wants to make briefing/watchlist honor the
+        dotenv too, that's a deliberate widening of the contract and this
+        test should be updated alongside CONFIGURATION.md. Don't silently
+        change the resolution chain in store.py.
+        """
+        config_dir = self.tmp / "config"
+        config_dir.mkdir()
+        dotenv_path = self.tmp / "from-dotenv.db"
+        (config_dir / ".env").write_text(
+            f"LAST30DAYS_DB_PATH={dotenv_path}\n", encoding="utf-8"
+        )
+        # Point env.py at our scratch config dir; without setting the env var
+        # in os.environ, store._get_db_path() should fall back to default
+        # because it never consults env.get_config() / the dotenv directly.
+        os.environ["LAST30DAYS_CONFIG_DIR"] = str(config_dir)
+        try:
+            self.assertEqual(
+                store._get_db_path(), store.DB_PATH,
+                msg="store._get_db_path() read the dotenv directly. "
+                    "If this is intentional, update CONFIGURATION.md to "
+                    "remove the 'shell-only for sibling scripts' qualifier.",
+            )
+        finally:
+            os.environ.pop("LAST30DAYS_CONFIG_DIR", None)
+
 
 class DbFlagEngineTests(unittest.TestCase):
     """End-to-end engine invocations confirming --db routes persistence."""
