@@ -252,10 +252,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--db",
         help=(
             "SQLite store path. Overrides the default "
-            "~/.local/share/last30days/research.db. Falls back to "
-            "$LAST30DAYS_DB_PATH then the default when not set. Lets "
-            "orchestrators (e.g., /landscape) target a per-engagement DB "
-            "without polluting the shared research store."
+            "~/.local/share/last30days/research.db. Precedence: "
+            "--db flag > $LAST30DAYS_DB_PATH env var > "
+            "LAST30DAYS_DB_PATH in ~/.config/last30days/.env > default. "
+            "Lets orchestrators (e.g., /landscape) target a per-engagement "
+            "DB without polluting the shared research store."
         ),
     )
     parser.add_argument("--x-handle", help="X handle for targeted supplemental search")
