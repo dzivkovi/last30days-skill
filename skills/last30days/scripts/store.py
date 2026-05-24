@@ -12,6 +12,7 @@ Database location: ~/.local/share/last30days/research.db
 
 import argparse
 import json
+import os
 import sqlite3
 import sys
 from datetime import datetime, timedelta, timezone
@@ -26,12 +27,35 @@ from lib import schema
 DB_DIR = Path.home() / ".local" / "share" / "last30days"
 DB_PATH = DB_DIR / "research.db"
 
-# Allow override for testing
-_db_override = None
+# In-process override for testing and for the engine's --db flag resolution.
+# Engine main() sets this when --db / LAST30DAYS_DB_PATH supplies a path so
+# every store.* helper (and sibling consumers like briefing.py and watchlist.py
+# when invoked under the same env) lands on the same DB. Tests still set it
+# directly for the in-process path-swap pattern.
+_db_override: Optional[Path] = None
 
 
 def _get_db_path() -> Path:
-    return _db_override or DB_PATH
+    """Resolve the SQLite store path.
+
+    Precedence (highest wins):
+      1. ``_db_override`` set in-process (tests; engine main() after flag/env
+         resolution).
+      2. ``LAST30DAYS_DB_PATH`` environment variable. Honored at every entry
+         point so sibling scripts that don't go through last30days.py main()
+         (briefing.py, watchlist.py) still target the per-engagement DB when
+         the orchestrator exports the env var.
+      3. ``DB_PATH`` default (``~/.local/share/last30days/research.db``).
+
+    Empty-string env values fall through to the default so an accidental
+    ``LAST30DAYS_DB_PATH=`` shell export doesn't try to open ``Path('')``.
+    """
+    if _db_override is not None:
+        return _db_override
+    env_val = os.environ.get("LAST30DAYS_DB_PATH")
+    if env_val:
+        return Path(env_val).expanduser()
+    return DB_PATH
 
 
 SCHEMA_V1 = """
