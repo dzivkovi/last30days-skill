@@ -2,14 +2,10 @@
 
 import json
 import os
-import sys
 import tempfile
 import unittest
 import urllib.error
-from pathlib import Path
 from unittest import mock
-
-sys.path.insert(0, str(Path(__file__).parent.parent / "skills" / "last30days" / "scripts"))
 
 from lib import youtube_yt
 
@@ -535,7 +531,6 @@ class TestYtdlpSSHRouting(unittest.TestCase):
         self.assertIn("yt-dlp", cmd[5])
         self.assertIn("--ignore-config", cmd[5])
         self.assertIn("--no-cookies-from-browser", cmd[5])
-
 
 if __name__ == "__main__":
     unittest.main()

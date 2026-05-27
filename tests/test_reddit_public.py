@@ -5,18 +5,15 @@ import urllib.error
 from unittest import mock
 
 import pytest
-import sys
-import os
 
 # Ensure lib is importable
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "skills", "last30days", "scripts"))
 
 from lib import reddit_public
-
 
 # ---------------------------------------------------------------------------
 # Fixtures / helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_reddit_listing(posts):
     """Build a Reddit listing JSON structure from a list of post dicts."""
@@ -37,7 +34,6 @@ def _make_reddit_listing(posts):
             },
         })
     return {"data": {"children": children}}
-
 
 SAMPLE_LISTING = _make_reddit_listing([
     {
@@ -72,10 +68,10 @@ def _mock_urlopen_ok(listing_data):
     resp.__exit__ = mock.MagicMock(return_value=False)
     return resp
 
-
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
+
 
 class TestSearchReturnsCorrectFields:
     """Search query returns parsed results with correct fields."""
@@ -329,10 +325,10 @@ class TestMissingSubreddit:
         results = reddit_public.search("test", subreddit="nonexistent")
         assert results == []
 
-
 # ---------------------------------------------------------------------------
 # Tests for comment enrichment (Unit 2)
 # ---------------------------------------------------------------------------
+
 
 class TestEnrichmentIntegration:
     """search_reddit_public enriches top posts with comments."""

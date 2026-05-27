@@ -1,8 +1,4 @@
-import sys
 import unittest
-from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "skills" / "last30days" / "scripts"))
 
 from lib import render, schema
 
@@ -150,6 +146,31 @@ class OutputEnvelopeTests(unittest.TestCase):
         open_idx = text.index("<!-- PASS-THROUGH FOOTER:")
         close_idx = text.index("<!-- END PASS-THROUGH FOOTER -->")
         self.assertIn("All agents reported back!", text[open_idx:close_idx])
+
+    def test_emoji_footer_includes_perplexity_when_present(self):
+        # Regression: Perplexity items survived retrieval/normalize/dedup but
+        # were dropped from the emoji-tree footer because _FOOTER_SOURCES
+        # omitted perplexity. The synthesis LLM that consumes the pass-through
+        # block then had no Perplexity signal, and users reasonably concluded
+        # the source was broken.
+        report = sample_report()
+        report.items_by_source["perplexity"] = [
+            schema.SourceItem(
+                item_id="px1",
+                source="perplexity",
+                title="Perplexity Sonar Pro: test topic",
+                body="AI synthesis body.",
+                url="",
+                container="perplexity.ai",
+                published_at="2026-03-16",
+                date_confidence="high",
+                engagement={"citations": 7},
+                metadata={},
+            ),
+        ]
+        text = render.render_compact(report)
+        self.assertIn("🧠 Perplexity:", text)
+        self.assertIn("7 citations", text)
 
     def test_canonical_boundary_scopes_pass_through_to_footer(self):
         text = render.render_compact(sample_report())
@@ -635,7 +656,6 @@ class YoutubeFooterTranscriptRatioTests(unittest.TestCase):
         text = render.render_compact(report)
         # No YouTube footer line at all - so no transcript segment either
         self.assertNotIn("with transcripts", text)
-
 
 if __name__ == "__main__":
     unittest.main()

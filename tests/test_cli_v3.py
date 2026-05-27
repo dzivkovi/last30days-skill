@@ -1,4 +1,3 @@
-# ruff: noqa: E402
 import json
 import io
 import shutil
@@ -11,12 +10,10 @@ from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest import mock
 
-
-REPO_ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(REPO_ROOT / "skills" / "last30days" / "scripts"))
-
 import last30days as cli
 from lib import schema
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 class CliV3Tests(unittest.TestCase):
@@ -304,7 +301,6 @@ class CliV3Tests(unittest.TestCase):
             f"saw {[c.kwargs.get('github_repos') for c in run_mock.call_args_list]}",
         )
         self.assertIn("[GitHub] Canonicalized repos:", stderr.getvalue())
-
 
 if __name__ == "__main__":
     unittest.main()

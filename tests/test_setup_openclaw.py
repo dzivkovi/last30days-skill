@@ -1,16 +1,11 @@
 """Tests for OpenClaw setup and device auth functions."""
 
 import json
-import sys
 import time
 from pathlib import Path
 from unittest.mock import patch, MagicMock, call
 
 import pytest
-
-# Add scripts dir to path
-SCRIPTS_DIR = Path(__file__).parent.parent / "skills" / "last30days" / "scripts"
-sys.path.insert(0, str(SCRIPTS_DIR))
 
 from lib import setup_wizard
 

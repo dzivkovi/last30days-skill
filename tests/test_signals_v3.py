@@ -1,9 +1,5 @@
 import math
-import sys
 import unittest
-from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "skills" / "last30days" / "scripts"))
 
 from lib import schema, signals
 from lib.hackernews import parse_hackernews_response
@@ -231,7 +227,6 @@ class SignalsV3Tests(unittest.TestCase):
         )
         pruned = signals.prune_low_relevance([weak], minimum=0.1)
         self.assertEqual(["weak"], [item.item_id for item in pruned])
-
 
     # -- Iteration 1: HN engagement bug --
 
@@ -566,7 +561,6 @@ class SignalsV3Tests(unittest.TestCase):
         self.assertIn("social", ids, "Item with relevance 0.05 should survive pruning")
         self.assertIn("strong", ids)
 
-
     # -- Unit 3: YouTube high-engagement relevance floor --
 
     def test_youtube_high_engagement_gets_relevance_floor(self):
@@ -607,7 +601,6 @@ class SignalsV3Tests(unittest.TestCase):
         )
         rel = signals.local_relevance(item, "kanye west")
         self.assertLess(rel, 0.3, f"Non-YouTube item should not get YouTube floor, got {rel}")
-
 
     # -- Unit 8: Engagement floor for TikTok/Instagram --
 
@@ -708,7 +701,6 @@ class SignalsV3Tests(unittest.TestCase):
         pruned = signals.prune_low_relevance([good] + spam_items)
         aspire_ids = [item.item_id for item in pruned if item.item_id.startswith("aspire")]
         self.assertEqual(len(aspire_ids), 0, f"All @aspiresnippets items should be pruned, got {aspire_ids}")
-
 
 if __name__ == "__main__":
     unittest.main()

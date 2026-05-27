@@ -5,18 +5,13 @@ HN, Polymarket, Reddit (always active), X, YouTube.
 ScrapeCreators adds TikTok + Instagram as bonus sources, not core.
 """
 
-import sys
-from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "skills" / "last30days" / "scripts"))
-
 import pytest
 from unittest.mock import patch
-
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _base_config(**overrides):
     """Return a minimal config dict."""
@@ -52,10 +47,10 @@ def _compute(config_overrides=None, result_overrides=None, ytdlp_installed=False
     with patch.object(youtube_yt, "is_ytdlp_installed", return_value=ytdlp_installed):
         return compute_quality_score(config, results)
 
-
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
+
 
 class TestBaseline:
     """HN + Polymarket + Reddit always active (no X, no YT) -> 60%."""

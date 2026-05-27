@@ -1,16 +1,11 @@
-# ruff: noqa: E402
 """Tests for the HTML emit renderer."""
 
 from __future__ import annotations
 
-import sys
 import tempfile
 import unittest
 from html.parser import HTMLParser
 from pathlib import Path
-
-REPO_ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(REPO_ROOT / "skills" / "last30days" / "scripts"))
 
 import last30days as cli
 from lib import html_render, schema
@@ -296,7 +291,6 @@ class HtmlCliIntegrationTests(unittest.TestCase):
         self.assertIn("last30days · OpenClaw vs Hermes", saved)
         self.assertIn("comparing 2: OpenClaw, Hermes", saved)
         self.assertNotIn("last30days · OpenClaw</title>", saved)
-
 
 if __name__ == "__main__":
     unittest.main()

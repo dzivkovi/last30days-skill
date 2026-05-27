@@ -6,10 +6,7 @@ PID callback wiring, and environment inheritance.
 
 import sys
 import unittest
-from pathlib import Path
 from unittest.mock import patch
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
 from lib import subproc
 
@@ -104,7 +101,6 @@ class TestRunWithTimeout(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 0)
         self.assertEqual(result.stdout.strip(), "ok")
-
 
 if __name__ == "__main__":
     unittest.main()

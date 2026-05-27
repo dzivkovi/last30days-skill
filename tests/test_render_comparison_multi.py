@@ -1,15 +1,9 @@
-# ruff: noqa: E402
 """Tests for render.render_comparison_multi and emit_comparison_output."""
 
 from __future__ import annotations
 
 import json
-import sys
 import unittest
-from pathlib import Path
-
-REPO_ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(REPO_ROOT / "skills" / "last30days" / "scripts"))
 
 import last30days as cli
 from lib import render, schema
@@ -299,7 +293,6 @@ class EmitComparisonOutputTests(unittest.TestCase):
         reports = [("A", _build_report("A", ["Thing A"]))]
         with self.assertRaises(SystemExit):
             cli.emit_comparison_output(reports, emit="xml")
-
 
 if __name__ == "__main__":
     unittest.main()
