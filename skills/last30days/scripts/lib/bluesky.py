@@ -96,9 +96,6 @@ _TOKEN_MAX_AGE_SECONDS = 5400  # 90 minutes (conservative, tokens last ~2 hours)
 
 
 def _log(msg: str):
-    # tty_only=False to match github/reddit/youtube; without it, every
-    # [Bluesky] line is silently dropped under Claude Code, Codex, CI,
-    # or any captured-stderr context.
     log.source_log("Bluesky", msg, tty_only=False)
 
 

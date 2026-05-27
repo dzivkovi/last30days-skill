@@ -27,8 +27,7 @@ def source_log(prefix: str, msg: str, *, tty_only: bool = True) -> None:
     a source module's logs are observability — silently dropping them under
     Claude Code, Codex, or CI hides both failures and success signals from
     the user and the synthesis LLM. The convention is enforced by
-    `tests/test_source_log_visibility.py`; see dzivkovi/last30days-skill#13
-    for the bug class that originally surfaced it.
+    `tests/test_source_log_visibility.py`.
     """
     if tty_only and not sys.stderr.isatty():
         return

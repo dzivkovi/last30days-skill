@@ -20,9 +20,6 @@ MODEL_DEEP_RESEARCH = "perplexity/sonar-deep-research"
 
 
 def _log(msg: str):
-    # tty_only=False to match github/reddit/youtube; without it, every
-    # [Perplexity] line is silently dropped under Claude Code, Codex, CI,
-    # or any captured-stderr context, hiding both errors and success signal.
     log.source_log("Perplexity", msg, tty_only=False)
 
 
