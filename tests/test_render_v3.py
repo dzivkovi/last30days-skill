@@ -148,11 +148,11 @@ class OutputEnvelopeTests(unittest.TestCase):
         self.assertIn("All agents reported back!", text[open_idx:close_idx])
 
     def test_emoji_footer_includes_perplexity_when_present(self):
-        # Regression for dzivkovi/last30days-skill#13: Perplexity items survived
-        # retrieval/normalize/dedup but were dropped from the emoji-tree footer
-        # because _FOOTER_SOURCES omitted perplexity. The synthesis LLM that
-        # consumes the pass-through block then had no Perplexity signal, and
-        # users reasonably concluded the source was broken.
+        # Regression: Perplexity items survived retrieval/normalize/dedup but
+        # were dropped from the emoji-tree footer because _FOOTER_SOURCES
+        # omitted perplexity. The synthesis LLM that consumes the pass-through
+        # block then had no Perplexity signal, and users reasonably concluded
+        # the source was broken.
         report = sample_report()
         report.items_by_source["perplexity"] = [
             schema.SourceItem(
