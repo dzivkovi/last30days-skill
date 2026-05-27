@@ -4,6 +4,7 @@ Covers the process-group cleanup path, timeout behavior, success path,
 PID callback wiring, and environment inheritance.
 """
 
+import sys
 import unittest
 from unittest.mock import patch
 
