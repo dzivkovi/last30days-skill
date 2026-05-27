@@ -44,3 +44,11 @@ uv.lock            export-ignore
 .clawhubignore  export-ignore
 .gitignore      export-ignore
 .gitattributes  export-ignore
+
+# Shell scripts must remain LF on every contributor's working tree.
+# Without this, git's `core.autocrlf=true` (a common Windows setting) converts
+# blobs from LF on checkout, which makes bash reject lines like `set -o pipefail`
+# because the option name carries a trailing `\r`. Affects hooks invoked
+# via subprocess (e.g. tests/test_last_run_state.py) and any direct bash
+# invocation from a Windows process. LF preserves cross-platform correctness.
+*.sh text eol=lf

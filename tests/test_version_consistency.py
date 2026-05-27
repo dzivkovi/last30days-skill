@@ -1,11 +1,15 @@
 import re
+import subprocess
+import sys
 import unittest
 from pathlib import Path
 
-from lib.skill_meta import read_skill_version
 
 ROOT = Path(__file__).resolve().parents[1]
 SKILL_ROOT = ROOT / "skills" / "last30days"
+
+sys.path.insert(0, str(SKILL_ROOT / "scripts"))
+from lib.skill_meta import read_skill_version  # noqa: E402
 
 
 def _skill_version() -> str:
@@ -45,16 +49,34 @@ class TestVersionConsistency(unittest.TestCase):
         self.assertIn('--save-dir="${LAST30DAYS_MEMORY_DIR}"', skill_text)
 
     def test_no_stray_hardcoded_memory_dir_paths(self) -> None:
+        # Scan only git-tracked files (`git ls-files`) so the test governs what
+        # ships to upstream, not what sits in a contributor's local working
+        # tree. Any untracked file is excluded (whether gitignored or never
+        # added), so user-local artifact directories (work/, print/, .venv/,
+        # .playwright-mcp/, etc.) are never in scope - no per-directory
+        # maintenance required.
+        #
+        # `-z` flag with NUL-delimited output keeps the scan safe against
+        # filenames containing newlines.
         allowed_suffixes = {".md", ".py", ".sh", ".txt", ".yml", ".yaml", ".json"}
-        skip_dirs = {".git", "assets", "fixtures", "docs"}
+        # Tracked directories whose content is intentionally exempt from the
+        # memory-dir-anchoring convention.
+        skip_dirs = {"assets", "fixtures", "docs"}
         offenders = []
 
-        for path in ROOT.rglob("*"):
-            if not path.is_file() or path.suffix not in allowed_suffixes:
+        raw = subprocess.check_output(
+            ["git", "ls-files", "-z"], cwd=str(ROOT), text=True, encoding="utf-8"
+        )
+        tracked = [entry for entry in raw.split("\0") if entry]
+
+        for rel_path in tracked:
+            rel = Path(rel_path)
+            path = ROOT / rel
+            if not path.is_file() or rel.suffix not in allowed_suffixes:
                 continue
-            if skip_dirs.intersection(path.relative_to(ROOT).parts):
+            if skip_dirs.intersection(rel.parts):
                 continue
-            if path.relative_to(ROOT) == Path("tests/test_version_consistency.py"):
+            if rel == Path("tests/test_version_consistency.py"):
                 continue
 
             try:
@@ -70,9 +92,10 @@ class TestVersionConsistency(unittest.TestCase):
                     and ("defaults to" in line or "${LAST30DAYS_MEMORY_DIR:-$HOME/Documents/Last30Days}" in line)
                 )
                 if not allowed_default:
-                    offenders.append(f"{path.relative_to(ROOT)}:{line_number}: {line.strip()}")
+                    offenders.append(f"{rel}:{line_number}: {line.strip()}")
 
         self.assertEqual([], offenders)
+
 
 if __name__ == "__main__":
     unittest.main()

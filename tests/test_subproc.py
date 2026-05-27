@@ -34,6 +34,10 @@ class TestRunWithTimeout(unittest.TestCase):
         )
         self.assertEqual(result.stderr.strip(), "err")
 
+    @unittest.skipIf(
+        sys.platform == "win32",
+        "Tests POSIX process-group + sh-based shell timeout semantics not available on Windows",
+    )
     def test_timeout_raises_subproctimeout(self):
         with self.assertRaises(subproc.SubprocTimeout):
             subproc.run_with_timeout(
@@ -41,6 +45,10 @@ class TestRunWithTimeout(unittest.TestCase):
                 timeout=1,
             )
 
+    @unittest.skipIf(
+        sys.platform == "win32",
+        "Tests POSIX process-group cleanup (sh `&` backgrounding + os.setsid) not available on Windows",
+    )
     def test_timeout_kills_process_group(self):
         """A slow child inside a shell should be killed when the group is signaled."""
         with self.assertRaises(subproc.SubprocTimeout):
