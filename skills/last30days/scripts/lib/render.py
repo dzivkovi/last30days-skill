@@ -1245,6 +1245,7 @@ _FOOTER_SOURCES: list[tuple[str, str, str, str, list[tuple[str, str]]]] = [
     ("truthsocial", "🇺🇸", "Truth Social", "post",     [("likes", "likes"), ("reposts", "reposts")]),
     ("github",      "🐙", "GitHub",       "item",     [("reactions", "reactions"), ("comments", "comments")]),
     ("digg",        "⛏️", "Digg",         "cluster",  [("postCount", "posts"), ("uniqueAuthors", "authors")]),
+    ("perplexity",  "🧠", "Perplexity",   "synthesis", [("citations", "citations")]),
 ]
 
 
