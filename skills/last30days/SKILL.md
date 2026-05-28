@@ -532,6 +532,8 @@ When both `LAST30DAYS_API_KEY` and `LAST30DAYS_API_BASE` are set, the engine run
 
 **Developer-only eval capture:** `--record-fixtures <dir>` is a hidden direct-engine flag for maintaining the deterministic research-quality suite. It records scrubbed HTTP and CLI-adapter responses to `<dir>/http.json`; it is never part of the user-facing slash-command invocation. Follow `docs/reference/eval.md` for fixture review, replay, and baseline rules.
 
+For the SQLite store side (active when `--store` or `LAST30DAYS_STORE=1` is set), the parallel knob is `--db <path>` with `LAST30DAYS_DB_PATH` as the env-var fallback. Flag wins over env wins over the default `~/.local/share/last30days/research.db`. Orchestrators that fan out parallel engine subprocesses use this to keep per-engagement persistence isolated from the shared store — see [CONFIGURATION.md](../../CONFIGURATION.md#trend-monitoring---store--watchlist--briefings) for the precedence rules.
+
 ## Step 0: First-Run Setup Wizard
 
 **CRITICAL: ALWAYS execute Step 0 BEFORE Step 1, even when the user provided a topic.** If the user typed `/last30days Mercer Island`, preserve that topic while handling the first-run choice. The wizard may ask for browser-cookie consent, but declining or skipping X must never stop the requested research.

@@ -79,7 +79,7 @@ Agents open most PRs. Follow this so `CHANGELOG.md` stops conflicting and versio
 Update `CONFIGURATION.md` when:
 
 - adding a new env var (e.g. `LAST30DAYS_*`, `BSKY_*`, `*_API_KEY`)
-- adding a new CLI flag that affects configuration (e.g. `--store`, `--web-backend`)
+- adding a new CLI flag that affects configuration (e.g. `--store`, `--db`, `--web-backend`)
 - adding a new per-client install pattern (Claude Code, Gemini, Codex, Cursor, Grok, Hermes…)
 - adding a new optional source that requires its own credential
 - changing the priority order of config layers (per-run flag > env > `.env` file > defaults)

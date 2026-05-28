@@ -753,6 +753,17 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--publish-password",
                         help="Optional shared password for --publish-html or 'library feed --publish'; prefer LAST30DAYS_PUBLISH_PASSWORD to avoid exposing secrets in process lists")
     parser.add_argument("--store", action="store_true", help="Persist ranked findings to the SQLite research store")
+    parser.add_argument(
+        "--db",
+        help=(
+            "SQLite store path. Overrides the default "
+            "~/.local/share/last30days/research.db. Precedence: "
+            "--db flag > $LAST30DAYS_DB_PATH env var > "
+            "LAST30DAYS_DB_PATH in ~/.config/last30days/.env > default. "
+            "Lets orchestrators (e.g., /landscape) target a per-engagement "
+            "DB without polluting the shared research store."
+        ),
+    )
     parser.add_argument("--x-handle", help="X handle for targeted supplemental search")
     parser.add_argument("--x-related", help="Comma-separated related X handles (searched with lower weight)")
     parser.add_argument("--web-backend", default="auto",
@@ -2963,6 +2974,21 @@ def _main(
     if args.save_dir is None:
         env_val = os.environ.get("LAST30DAYS_MEMORY_DIR")
         args.save_dir = env_val if env_val is not None else config.get("LAST30DAYS_MEMORY_DIR")
+
+    # Env-var + config fallback for --db, mirroring the --save-dir block above.
+    # Resolved path is pinned into store._db_override so every store.* helper
+    # (and persist_report below) targets the same DB. Empty strings collapse
+    # to "no override", falling back to LAST30DAYS_DB_PATH (which store.py
+    # also reads) and ultimately the default. The `is None` check on args.db
+    # preserves the flag-wins-over-env-and-config precedence, matching the
+    # save-dir contract documented in CONFIGURATION.md.
+    db_choice: str | None = args.db
+    if db_choice is None:
+        env_db = os.environ.get("LAST30DAYS_DB_PATH")
+        db_choice = env_db if env_db is not None else config.get("LAST30DAYS_DB_PATH")
+    if db_choice:
+        import store as _store
+        _store._db_override = Path(db_choice).expanduser()
 
     # Surface SSH-routing config as an env var so library modules (e.g.
     # youtube_yt) can read it without taking a config dependency. This

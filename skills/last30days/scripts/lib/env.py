@@ -510,6 +510,7 @@ def get_config(policy: ConfigLoadPolicy | None = None) -> dict[str, Any]:
         # Opt-in strict exit: truthy -> CLI exits 3 when any source outcome is
         # degraded (neither ok, no-results, nor skipped-unconfigured). #384.
         ('LAST30DAYS_STRICT_EXIT', None),
+        ('LAST30DAYS_DB_PATH', None),
         ('LAST30DAYS_MEMORY_DIR', None),
         # Optional local-only evidence source. Paths are separated with the
         # platform path separator (":" on macOS/Linux, ";" on Windows).
