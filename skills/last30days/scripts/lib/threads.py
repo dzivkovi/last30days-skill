@@ -154,7 +154,12 @@ def search_threads(
     try:
         data = http.get(
             f"{SCRAPECREATORS_BASE}/search",
-            params={"keyword": core_topic},
+            # ScrapeCreators v1 search endpoints use 'query', NOT 'keyword' — even
+            # though the endpoint is labeled "Search by Keyword" in their docs sidebar.
+            # Sending 'keyword=' returns HTTP 400 "Invalid parameters or missing
+            # required fields." Pinned by tests/test_threads.py. See issue #15 and
+            # docs/solutions/design-patterns/scrapecreators-v1-search-uses-query-param-2026-05-27.md.
+            params={"query": core_topic},
             headers=http.scrapecreators_headers(token),
             timeout=30,
             retries=2,
