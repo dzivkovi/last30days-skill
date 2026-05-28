@@ -8,7 +8,7 @@ bookmarks). Requires an API key from xquik.com.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from . import http, log
 from .relevance import token_overlap_relevance as _compute_relevance
@@ -88,6 +88,7 @@ def search_xquik(
     queries = expand_xquik_queries(topic, depth)
     all_items: List[Dict[str, Any]] = []
     seen_ids: set[str] = set()
+    last_error: Optional[str] = None
 
     for query_text in queries:
         try:
@@ -125,10 +126,16 @@ def search_xquik(
             status = getattr(exc, "status_code", None)
             if status in (401, 403):
                 return {"items": [], "error": f"Xquik auth failed ({status})"}
+            last_error = f"HTTPError: {exc}"
             _log(f"HTTP error for query '{query_text}': {exc}")
         except Exception as exc:
+            last_error = f"{type(exc).__name__}: {exc}"
             _log(f"Error for query '{query_text}': {exc}")
 
+    # If every query errored without yielding items, surface the last error so
+    # the pipeline can route it via _swallowed_error_artifact -> bundle.errors_by_source.
+    if not all_items and last_error:
+        return {"items": [], "error": f"Xquik queries failed: {last_error}"}
     return {"items": all_items}
 
 

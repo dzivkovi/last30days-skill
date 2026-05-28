@@ -403,6 +403,15 @@ def run(
                 else:
                     bundle.errors_by_source[source] = str(exc)
                     continue
+            # Route swallowed source errors so the renderer's ## Source Errors
+            # block surfaces them. Pop the key so leftover artifact metadata
+            # (label, model, citationCount, etc.) still flows into
+            # bundle.artifacts["grounding"] cleanly. See AGENTS.md "error
+            # envelope" convention.
+            if isinstance(artifact, dict):
+                swallowed_error = artifact.pop("error", None)
+                if swallowed_error:
+                    bundle.errors_by_source[source] = swallowed_error
             normalized = _normalize_score_dedupe(
                 source, raw_items, from_date, to_date,
                 freshness_mode=plan.freshness_mode,
@@ -841,6 +850,23 @@ def _retry_thin_sources(
                 print(f"[Pipeline] Retry failed for {source}: {type(exc).__name__}: {exc}", file=sys.stderr)
 
 
+def _swallowed_error_artifact(result: object) -> dict[str, str]:
+    """Return ``{"error": msg}`` when a source-module response carries an error.
+
+    Source modules that catch ``HTTPError`` (or any exception) inline instead
+    of re-raising must include an ``error`` field in their return envelope so
+    the pipeline can surface the failure in the rendered ``## Source Errors``
+    block. Returns ``{}`` for None responses or dicts without an error. The
+    error value is coerced via ``str()`` so a source that mistakenly emits an
+    Exception object or non-string still satisfies the str-typed
+    ``bundle.errors_by_source`` contract on schema.RetrievalBundle.
+    """
+    if not isinstance(result, dict):
+        return {}
+    error = result.get("error")
+    return {"error": str(error)} if error else {}
+
+
 def _retrieve_stream(
     *,
     topic: str,
@@ -874,6 +900,8 @@ def _retrieve_stream(
         # from the original user topic, not the planner's narrowed search_query.
         reddit_query = raw_topic or subquery.search_query
         # Public Reddit first (free, gets comments); SC as backup
+        public_error: str | None = None
+        sc_error: str | None = None
         try:
             public_results = reddit_public.search_reddit_public(
                 reddit_query, from_date, to_date, depth=depth,
@@ -882,12 +910,11 @@ def _retrieve_stream(
             if public_results:
                 return public_results, {}
         except Exception as exc:
-            sys.stderr.write(
-                f"[Reddit] Public search failed ({type(exc).__name__}: {exc})"
-            )
+            public_error = f"{type(exc).__name__}: {exc}"
+            sys.stderr.write(f"[Reddit] Public search failed ({public_error})")
             if not config.get("SCRAPECREATORS_API_KEY"):
                 sys.stderr.write("\n")
-                return [], {}
+                return [], {"error": f"Reddit public failed: {public_error}"}
             sys.stderr.write(", using ScrapeCreators backup\n")
         # Fallback to ScrapeCreators if public returned empty or raised
         if config.get("SCRAPECREATORS_API_KEY"):
@@ -902,10 +929,18 @@ def _retrieve_stream(
                 )
                 return reddit.parse_reddit_response(result), {}
             except Exception as exc:
+                sc_error = f"{type(exc).__name__}: {exc}"
                 sys.stderr.write(
-                    f"[Reddit] ScrapeCreators backup also failed "
-                    f"({type(exc).__name__}: {exc})\n"
+                    f"[Reddit] ScrapeCreators backup also failed ({sc_error})\n"
                 )
+        # Both backends exhausted; surface whichever error(s) we captured so the
+        # pipeline can route them via _swallowed_error_artifact.
+        if public_error and sc_error:
+            return [], {"error": f"Reddit public failed: {public_error}; SC backup: {sc_error}"}
+        if sc_error:
+            return [], {"error": f"Reddit SC backup failed: {sc_error}"}
+        if public_error:
+            return [], {"error": f"Reddit public failed: {public_error}"}
         return [], {}
     if source == "x":
         backend = runtime.x_search_backend or env.get_x_source(config)
@@ -966,7 +1001,7 @@ def _retrieve_stream(
         if items and env.is_tiktok_comments_available(config):
             sc_token = config.get("SCRAPECREATORS_API_KEY", "")
             tiktok.enrich_with_comments(items, token=sc_token)
-        return items, {}
+        return items, _swallowed_error_artifact(result)
     if source == "instagram":
         # Use raw_topic so expand_instagram_queries() generates diverse variants
         # from the original user topic, not the planner's narrowed search_query.
@@ -979,33 +1014,33 @@ def _retrieve_stream(
             token=env.get_instagram_token(config),
             ig_creators=ig_creators,
         )
-        return instagram.parse_instagram_response(result), {}
+        return instagram.parse_instagram_response(result), _swallowed_error_artifact(result)
     if source == "hackernews":
         result = hackernews.search_hackernews(subquery.search_query, from_date, to_date, depth=depth)
-        return hackernews.parse_hackernews_response(result, query=subquery.search_query), {}
+        return hackernews.parse_hackernews_response(result, query=subquery.search_query), _swallowed_error_artifact(result)
     if source == "digg":
         result = digg.search_digg(subquery.search_query, from_date, to_date, depth=depth)
         items = digg.parse_digg_response(result, query=subquery.search_query)
         # Enrichment with attached X posts is deferred to
         # _finalize_items_by_source so it runs on the items that actually
         # survive dedupe rather than on top-K of the raw fanout.
-        return items, {}
+        return items, _swallowed_error_artifact(result)
     if source == "bluesky":
         result = bluesky.search_bluesky(subquery.search_query, from_date, to_date, depth=depth, config=config)
-        return bluesky.parse_bluesky_response(result), {}
+        return bluesky.parse_bluesky_response(result), _swallowed_error_artifact(result)
     if source == "threads":
         result = threads.search_threads(
             subquery.search_query, from_date, to_date,
             depth=depth,
             token=config.get("SCRAPECREATORS_API_KEY"),
         )
-        return threads.parse_threads_response(result), {}
+        return threads.parse_threads_response(result), _swallowed_error_artifact(result)
     if source == "truthsocial":
         result = truthsocial.search_truthsocial(subquery.search_query, from_date, to_date, depth=depth, config=config)
-        return truthsocial.parse_truthsocial_response(result), {}
+        return truthsocial.parse_truthsocial_response(result), _swallowed_error_artifact(result)
     if source == "polymarket":
         result = polymarket.search_polymarket(subquery.search_query, from_date, to_date, depth=depth)
-        return polymarket.parse_polymarket_response(result, topic=subquery.search_query), {}
+        return polymarket.parse_polymarket_response(result, topic=subquery.search_query), _swallowed_error_artifact(result)
     if source == "github":
         # Resolve once at the pipeline boundary so search and enrich
         # share the result; otherwise each call would re-run the env
@@ -1021,7 +1056,7 @@ def _retrieve_stream(
             depth=depth,
             token=env.get_pinterest_token(config),
         )
-        return pinterest.parse_pinterest_response(result), {}
+        return pinterest.parse_pinterest_response(result), _swallowed_error_artifact(result)
     if source == "xiaohongshu":
         return xiaohongshu_api.search_feeds(
             subquery.search_query,
@@ -1038,7 +1073,7 @@ def _retrieve_stream(
             depth=depth,
             token=env.get_xquik_token(config),
         )
-        return xquik.parse_xquik_response(result), {}
+        return xquik.parse_xquik_response(result), _swallowed_error_artifact(result)
     raise RuntimeError(f"Unsupported source: {source}")
 
 

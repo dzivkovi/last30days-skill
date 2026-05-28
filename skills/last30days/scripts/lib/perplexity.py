@@ -77,15 +77,17 @@ def search(
         data = http.post(OPENROUTER_URL, json_data, headers=headers, timeout=timeout)
     except http.HTTPError as e:
         if e.status_code == 401:
-            _log("Invalid OpenRouter API key (401)")
+            message = "Invalid OpenRouter API key (401)"
         elif e.status_code == 429:
-            _log("Rate limited by OpenRouter (429)")
+            message = "Rate limited by OpenRouter (429)"
         else:
-            _log(f"HTTP error: {e}")
-        return [], {}
+            message = f"HTTP error: {e}"
+        _log(message)
+        return [], {"error": f"HTTPError: {message}"}
     except Exception as e:
+        message = f"{type(e).__name__}: {e}"
         _log(f"Request failed: {e}")
-        return [], {}
+        return [], {"error": message}
 
     # Parse response
     choices = data.get("choices", [])
