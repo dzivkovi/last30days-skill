@@ -55,7 +55,7 @@ Python 3.12+ required. Use `uv` for the env; the venv lives at `.venv/`.
 Update `CONFIGURATION.md` when:
 
 - adding a new env var (e.g. `LAST30DAYS_*`, `BSKY_*`, `*_API_KEY`)
-- adding a new CLI flag that affects configuration (e.g. `--store`, `--web-backend`)
+- adding a new CLI flag that affects configuration (e.g. `--store`, `--db`, `--web-backend`)
 - adding a new per-client install pattern (Claude Code, Gemini, Codex, Cursor, Hermes…)
 - adding a new optional source that requires its own credential
 - changing the priority order of config layers (per-run flag > env > `.env` file > defaults)

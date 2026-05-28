@@ -276,6 +276,8 @@ Set `LAST30DAYS_MEMORY_DIR` before invoking the skill to choose where raw resear
 
 The engine reads `LAST30DAYS_MEMORY_DIR` from either the process env or `~/.config/last30days/.env`, so direct CLI invocations (`python3 scripts/last30days.py ...`) without `--save-dir` will still save when the env var is set. Mirrors the `LAST30DAYS_STORE` env-or-flag convention. Explicit `--save-dir` always wins.
 
+For the SQLite store side (active when `--store` or `LAST30DAYS_STORE=1` is set), the parallel knob is `--db <path>` with `LAST30DAYS_DB_PATH` as the env-var fallback. Flag wins over env wins over the default `~/.local/share/last30days/research.db`. Orchestrators that fan out parallel engine subprocesses use this to keep per-engagement persistence isolated from the shared store — see [CONFIGURATION.md](../../CONFIGURATION.md#trend-monitoring---store--watchlist--briefings) for the precedence rules.
+
 ## Step 0: First-Run Setup Wizard
 
 Before proceeding to Step 1, handle first-run setup.
