@@ -900,6 +900,8 @@ def _retrieve_stream(
         # from the original user topic, not the planner's narrowed search_query.
         reddit_query = raw_topic or subquery.search_query
         # Public Reddit first (free, gets comments); SC as backup
+        public_error: str | None = None
+        sc_error: str | None = None
         try:
             public_results = reddit_public.search_reddit_public(
                 reddit_query, from_date, to_date, depth=depth,
@@ -908,12 +910,11 @@ def _retrieve_stream(
             if public_results:
                 return public_results, {}
         except Exception as exc:
-            sys.stderr.write(
-                f"[Reddit] Public search failed ({type(exc).__name__}: {exc})"
-            )
+            public_error = f"{type(exc).__name__}: {exc}"
+            sys.stderr.write(f"[Reddit] Public search failed ({public_error})")
             if not config.get("SCRAPECREATORS_API_KEY"):
                 sys.stderr.write("\n")
-                return [], {}
+                return [], {"error": f"Reddit public failed: {public_error}"}
             sys.stderr.write(", using ScrapeCreators backup\n")
         # Fallback to ScrapeCreators if public returned empty or raised
         if config.get("SCRAPECREATORS_API_KEY"):
@@ -928,10 +929,18 @@ def _retrieve_stream(
                 )
                 return reddit.parse_reddit_response(result), {}
             except Exception as exc:
+                sc_error = f"{type(exc).__name__}: {exc}"
                 sys.stderr.write(
-                    f"[Reddit] ScrapeCreators backup also failed "
-                    f"({type(exc).__name__}: {exc})\n"
+                    f"[Reddit] ScrapeCreators backup also failed ({sc_error})\n"
                 )
+        # Both backends exhausted; surface whichever error(s) we captured so the
+        # pipeline can route them via _swallowed_error_artifact.
+        if public_error and sc_error:
+            return [], {"error": f"Reddit public failed: {public_error}; SC backup: {sc_error}"}
+        if sc_error:
+            return [], {"error": f"Reddit SC backup failed: {sc_error}"}
+        if public_error:
+            return [], {"error": f"Reddit public failed: {public_error}"}
         return [], {}
     if source == "x":
         backend = runtime.x_search_backend or env.get_x_source(config)

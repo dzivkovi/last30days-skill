@@ -125,6 +125,94 @@ class PerplexityErrorEnvelopeTests(unittest.TestCase):
         self.assertNotIn("error", artifact)
 
 
+class XquikEnvelopeTests(unittest.TestCase):
+    """Fix for Codex P1: xquik.search_xquik log-and-fall-through previously
+    returned ``{"items": []}`` with no error key after every query errored,
+    making the failure silent. Pipeline now sees the envelope."""
+
+    def test_all_queries_failing_produces_error_envelope(self):
+        from lib import xquik
+        err = http.HTTPError("HTTP 500 Internal Server Error", status_code=500)
+        with patch.object(xquik.http, "get", side_effect=err):
+            result = xquik.search_xquik(
+                "test topic", "2026-04-28", "2026-05-28",
+                depth="quick", token="fake-key",
+            )
+        self.assertEqual(result.get("items"), [])
+        self.assertIn("error", result)
+        self.assertIn("HTTPError", result["error"])
+        self.assertIn("500", result["error"])
+
+    def test_some_queries_succeed_no_error_envelope(self):
+        """If at least one query yields items, we don't pollute with an error."""
+        from lib import xquik
+        with patch.object(xquik.http, "get", return_value={"tweets": []}):
+            result = xquik.search_xquik(
+                "test topic", "2026-04-28", "2026-05-28",
+                depth="quick", token="fake-key",
+            )
+        # No items collected but no exception either; should NOT emit error key.
+        self.assertNotIn("error", result)
+
+
+class RedditDispatchEnvelopeTests(unittest.TestCase):
+    """Fix for Codex P1: pipeline reddit dispatch previously returned
+    ``([], {})`` when both public+SC backends failed, hiding the failure from
+    the rendered ## Source Errors block. Now surfaces the captured exception
+    text(s) via the artifact envelope."""
+
+    def _retrieve_reddit(self, config: dict) -> tuple[list, dict]:
+        return pipeline._retrieve_stream(
+            topic="test",
+            subquery=schema.SubQuery(
+                label="primary",
+                search_query="test",
+                ranking_query="test",
+                sources=["reddit"],
+            ),
+            source="reddit",
+            config=config,
+            depth="quick",
+            date_range=("2026-04-28", "2026-05-28"),
+            runtime=schema.ProviderRuntime(
+                reasoning_provider="gemini",
+                planner_model="gemini-3.1-flash-lite",
+                rerank_model="gemini-3.1-flash-lite",
+            ),
+            mock=False,
+        )
+
+    def test_public_raises_and_no_sc_backup_surfaces_error(self):
+        from lib import reddit_public
+        with patch.object(
+            reddit_public, "search_reddit_public",
+            side_effect=ConnectionError("upstream offline"),
+        ):
+            items, artifact = self._retrieve_reddit({})
+        self.assertEqual(items, [])
+        self.assertIn("error", artifact)
+        self.assertIn("Reddit public failed", artifact["error"])
+        self.assertIn("ConnectionError", artifact["error"])
+        self.assertIn("upstream offline", artifact["error"])
+
+    def test_both_backends_failing_surfaces_combined_error(self):
+        from lib import reddit, reddit_public
+        with patch.object(
+            reddit_public, "search_reddit_public",
+            side_effect=ConnectionError("public down"),
+        ), patch.object(
+            reddit, "search_and_enrich",
+            side_effect=RuntimeError("SC backup also down"),
+        ):
+            items, artifact = self._retrieve_reddit({"SCRAPECREATORS_API_KEY": "fake-key"})
+        self.assertEqual(items, [])
+        self.assertIn("error", artifact)
+        self.assertIn("Reddit public failed", artifact["error"])
+        self.assertIn("SC backup", artifact["error"])
+        self.assertIn("public down", artifact["error"])
+        self.assertIn("SC backup also down", artifact["error"])
+
+
 class SourceErrorsRenderingTests(unittest.TestCase):
     """U5: populated errors_by_source must surface in rendered output."""
 
