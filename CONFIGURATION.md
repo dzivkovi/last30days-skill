@@ -43,6 +43,7 @@ The engine's `.env` reader doesn't expand `$HOME` — only the tilde, via `Path(
 
 - `--save-dir <path>` - one-off output location. **Flag wins over env var.** If neither flag nor env var is set, the engine does not write a file (DB persistence is independent — see `LAST30DAYS_STORE` below).
 - `--save-suffix <name>` - distinguish runs of the same topic (e.g. per client: `--save-suffix=acme`).
+- `--db <path>` - one-off SQLite store location. **Flag wins over `LAST30DAYS_DB_PATH` env var wins over the default `~/.local/share/last30days/research.db`.** Useful for orchestrators (e.g., `/landscape`) that fan out many engine calls and want per-engagement persistence without polluting the shared store. Only takes effect when `--store` (or `LAST30DAYS_STORE=1`) is also active.
 
 The footer line `📎 Raw results saved to ${LAST30DAYS_MEMORY_DIR:-$HOME/Documents/Last30Days}/<slug>-raw.md` is the canonical pointer; if it shows backslashes on Windows update past v3.1.1.
 
@@ -155,6 +156,14 @@ The default behavior - one slug-named file per topic, overwritten on rerun - is 
 Adding `--store` to any run persists every finding to a SQLite database (default at `~/.local/share/last30days/research.db`). Findings dedupe on the `source_url` column (UNIQUE constraint), so the same URL across runs updates the existing row instead of creating a duplicate. The markdown file still saves; the SQLite is the time-series substrate.
 
 **Always-on alternative:** set `LAST30DAYS_STORE=1` in your `.env` instead of remembering `--store` on every invocation. The flag still works as before; the env var is purely additive. Same hybrid pattern as `LAST30DAYS_DEBUG` — works whether shell-exported or in `.env`.
+
+**Custom store location (`--db` / `LAST30DAYS_DB_PATH`):** by default `--store` writes to the shared `~/.local/share/last30days/research.db`. Orchestrators that wrap the engine (e.g., `/landscape` fanning 6 spokes × N entities) often want per-engagement persistence so concurrent runs don't intermix with standalone `/last30days` history. Two routes, in precedence order (highest wins):
+
+1. `--db <path>` per-run override on the engine. Honored only by `last30days.py`.
+2. `LAST30DAYS_DB_PATH=<path>` in the **process environment** (i.e., shell-exported). Honored by `last30days.py`, `briefing.py`, and `watchlist.py` because `store._get_db_path()` reads `os.environ` directly.
+3. `LAST30DAYS_DB_PATH=<path>` in `~/.config/last30days/.env`. Honored only by `last30days.py` (which calls `env.get_config()` to merge the dotenv into config). `briefing.py` and `watchlist.py` do not read the dotenv on their own; if you want them on the same custom store, either shell-export the env var into their invocation environment (cron / launchd / systemd unit file), or run them under `LAST30DAYS_DB_PATH=/path/to/db python3 scripts/briefing.py …`.
+
+Empty env values fall back to the default (DB persistence has no natural "off" state when `--store` is active).
 
 Relevant tables: `topics`, `research_runs`, `findings`, `settings`. Schema: [`scripts/store.py`](skills/last30days/scripts/store.py).
 

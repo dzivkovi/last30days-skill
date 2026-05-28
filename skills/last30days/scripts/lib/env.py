@@ -315,6 +315,7 @@ def get_config() -> dict[str, Any]:
         ('LAST30DAYS_X_MODEL', None),
         ('LAST30DAYS_X_BACKEND', None),
         ('LAST30DAYS_STORE', None),
+        ('LAST30DAYS_DB_PATH', None),
         ('LAST30DAYS_MEMORY_DIR', None),
         ('OPENAI_MODEL_PIN', None),
         ('XAI_MODEL_PIN', None),
