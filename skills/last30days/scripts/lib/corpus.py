@@ -135,11 +135,14 @@ def search(
             except OSError as exc:
                 notes.append(f"Skipped {_display_path(path, root)}: {_safe_error(exc)}")
                 continue
-            published_at = datetime.fromtimestamp(
+            mtime_date = datetime.fromtimestamp(
                 stat.st_mtime, tz=timezone.utc
             ).date().isoformat()
-            if not all_time and not (from_date <= published_at <= to_date):
-                continue
+            # The recency window is applied after the text is read: a
+            # frontmatter ``published_at`` (bridged feed items, exported
+            # threads) overrides the file mtime, so the file must be opened
+            # before the window can be judged. The newest-first walk and the
+            # mtime cache keep that bounded.
 
             cached = cache_entries.get(str(path))
             if (
@@ -167,33 +170,59 @@ def search(
                     "text": text[:MAX_CACHE_TEXT_CHARS],
                 })
 
-            title = _path_title(path)
-            score = _match_score(topic, f"{title}\n{text}")
+            fields, body = _parse_frontmatter(text)
+            published_at = mtime_date
+            raw_date = fields.get("published_at")
+            if raw_date is not None:
+                parsed_date = _frontmatter_date(raw_date)
+                if parsed_date:
+                    published_at = parsed_date
+                else:
+                    notes.append(
+                        f"Ignored unparseable frontmatter published_at in "
+                        f"{_display_path(path, root)}"
+                    )
+            if not all_time and not (from_date <= published_at <= to_date):
+                continue
+
+            title = _frontmatter_str(fields.get("title")) or _path_title(path)
+            tags_text = _frontmatter_tags(fields.get("tags"))
+            score = _match_score(topic, f"{title}\n{body}\n{tags_text}")
             if score < 0.15:
                 continue
             relative_path = str(path.relative_to(root))
             path_digest = hashlib.sha256(str(path).encode("utf-8")).hexdigest()
+            corpus_url = f"corpus://{path_digest}"
+            url = _frontmatter_url(fields.get("url")) or corpus_url
+            metadata: dict[str, Any] = {
+                "path": str(path),
+                "relative_path": relative_path,
+                "extension": path.suffix.lower(),
+                "local_only": True,
+            }
+            if fields:
+                metadata["corpus_url"] = corpus_url
+                extra = {k: v for k, v in fields.items() if k not in FRONTMATTER_KEYS}
+                if extra:
+                    metadata["frontmatter"] = extra
             item = schema.SourceItem(
                 item_id=f"C{path_digest[:12]}",
                 source=SOURCE,
                 title=title,
-                body=text,
-                url=f"corpus://{path_digest}",
-                container=str(path.parent),
+                body=body,
+                url=url,
+                author=_frontmatter_str(fields.get("author")),
+                container=_frontmatter_str(fields.get("container")) or str(path.parent),
                 published_at=published_at,
                 date_confidence="high",
+                engagement=_frontmatter_engagement(fields.get("engagement")),
                 relevance_hint=score,
                 why_relevant=f"Matched local file {relative_path}",
                 # Leave empty so extract_best_snippet derives the matching
                 # window; a file-prefix snippet is preserved verbatim and can
                 # show unrelated intro text (and draw entity-miss demotion).
                 snippet="",
-                metadata={
-                    "path": str(path),
-                    "relative_path": relative_path,
-                    "extension": path.suffix.lower(),
-                    "local_only": True,
-                },
+                metadata=metadata,
             )
             candidates.append((score, stat.st_mtime_ns, item))
     if scan_limit_reached:
@@ -303,6 +332,113 @@ def _extract_text(path: Path, *, pdftotext: str | None) -> str:
 def _path_title(path: Path) -> str:
     title = path.stem.replace("_", " ").replace("-", " ")
     return " ".join(title.split()) or path.name
+
+
+# Frontmatter keys the adapter maps onto SourceItem fields. Anything else a
+# bridge writes (schema_version, item_id, client_id, source_kind, channel,
+# thread_id, classification, text_kind, retrieved_at, ...) is preserved under
+# metadata["frontmatter"] and never interpreted here.
+FRONTMATTER_KEYS = frozenset(
+    {"title", "url", "author", "container", "published_at", "engagement", "tags"}
+)
+_FRONTMATTER_MAX_LINES = 200
+
+
+def _parse_frontmatter(text: str) -> tuple[dict[str, Any], str]:
+    """Split a leading ``---`` block into ``(fields, body)``.
+
+    Stdlib only, deliberately narrow: flat ``key: value`` lines, one level of
+    ``{a: 1, b: 2}`` maps, ``[a, b]`` lists, quoted strings, ints, floats. A
+    file without a well-formed block returns ``({}, text)`` unchanged, so the
+    lane behaves exactly as before for ordinary notes.
+    """
+    if not text.startswith("---"):
+        return {}, text
+    lines = text.splitlines()
+    if lines[0].strip() != "---":
+        return {}, text
+    end = None
+    for index in range(1, min(len(lines), _FRONTMATTER_MAX_LINES)):
+        if lines[index].strip() == "---":
+            end = index
+            break
+    if end is None:
+        return {}, text
+    fields: dict[str, Any] = {}
+    for raw in lines[1:end]:
+        if raw.startswith((" ", "\t", "#")) or ":" not in raw:
+            continue
+        key, _, value = raw.partition(":")
+        key = key.strip().lower()
+        if key:
+            fields[key] = _parse_scalar(value.strip())
+    return fields, "\n".join(lines[end + 1 :])
+
+
+def _parse_scalar(value: str) -> Any:
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in "'\"":
+        return value[1:-1]
+    if value.startswith("{") and value.endswith("}"):
+        mapping: dict[str, Any] = {}
+        for part in value[1:-1].split(","):
+            if ":" in part:
+                key, _, inner = part.partition(":")
+                mapping[key.strip().strip("'\"")] = _parse_scalar(inner.strip())
+        return mapping
+    if value.startswith("[") and value.endswith("]"):
+        return [_parse_scalar(part.strip()) for part in value[1:-1].split(",") if part.strip()]
+    if value.lower() in {"", "null", "~"}:
+        return None
+    for cast in (int, float):
+        try:
+            return cast(value)
+        except ValueError:
+            continue
+    return value
+
+
+def _frontmatter_str(value: Any) -> str | None:
+    text = str(value).strip() if value is not None else ""
+    return text or None
+
+
+def _frontmatter_date(value: Any) -> str | None:
+    """ISO date or datetime (``Z`` accepted) to ``YYYY-MM-DD``; else None."""
+    text = str(value).strip()
+    if not text:
+        return None
+    try:
+        return datetime.fromisoformat(text.replace("Z", "+00:00")).date().isoformat()
+    except ValueError:
+        return None
+
+
+def _frontmatter_url(value: Any) -> str | None:
+    """Only http(s) URLs may replace the opaque ``corpus://`` key: a real URL is
+    what lets fusion merge a bridged item with the same article seen on the
+    web, and anything else (file paths, private schemes) must stay opaque."""
+    text = _frontmatter_str(value)
+    if text and text.lower().startswith(("http://", "https://")):
+        return text
+    return None
+
+
+def _frontmatter_engagement(value: Any) -> dict[str, float | int]:
+    if not isinstance(value, dict):
+        return {}
+    counts: dict[str, float | int] = {}
+    for key, raw in value.items():
+        if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+            continue
+        if raw >= 0:
+            counts[str(key)] = raw
+    return counts
+
+
+def _frontmatter_tags(value: Any) -> str:
+    if isinstance(value, list):
+        return " ".join(str(tag) for tag in value if tag is not None)
+    return _frontmatter_str(value) or ""
 
 
 def _match_score(topic: str, text: str) -> float:
