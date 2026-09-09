@@ -6,6 +6,7 @@ import hashlib
 import os
 import re
 import sqlite3
+from contextlib import closing
 from dataclasses import dataclass, replace
 from datetime import date
 from pathlib import Path
@@ -91,7 +92,7 @@ CREATE VIRTUAL TABLE IF NOT EXISTS library_fts USING fts5(
 
 def fts5_available() -> bool:
     try:
-        with sqlite3.connect(":memory:") as conn:
+        with closing(sqlite3.connect(":memory:")) as conn:
             conn.execute("CREATE VIRTUAL TABLE probe USING fts5(value)")
     except sqlite3.DatabaseError:
         return False
@@ -139,7 +140,7 @@ def index_brief(
         return False
     target = Path(db_path).expanduser()
     _ensure_private_directory(target.parent)
-    with _connect(target) as conn:
+    with closing(_connect(target)) as conn:
         _upsert_entry(conn, entry)
         conn.commit()
     return True
@@ -160,7 +161,7 @@ def search(
     brief_matches: list[LibrarySearchMatch] = []
     if target.is_file():
         try:
-            with _connect(target) as conn:
+            with closing(_connect(target)) as conn:
                 rows = conn.execute(
                     """SELECT d.topic, d.published_date, d.headline,
                               snippet(library_fts, 4, '', '', ' … ', 36) AS snippet,
@@ -218,7 +219,7 @@ def _sync_library(
     entries, notes = library.scan_library(memory_dir, briefs_dir)
     _ensure_private_directory(db_path.parent)
     indexed = unchanged = 0
-    with _connect(db_path) as conn:
+    with closing(_connect(db_path)) as conn:
         existing = {
             row["entry_id"]: (row["source_mtime_ns"], row["source_size"], row["content_hash"])
             for row in conn.execute(
@@ -343,7 +344,7 @@ def _search_store_sightings(
     if not store_db_path.is_file():
         return []
     try:
-        with sqlite3.connect(str(store_db_path)) as conn:
+        with closing(sqlite3.connect(str(store_db_path))) as conn:
             conn.row_factory = sqlite3.Row
             rows = conn.execute(
                 """SELECT t.name AS topic, rr.run_date,

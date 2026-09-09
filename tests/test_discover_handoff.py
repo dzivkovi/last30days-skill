@@ -12,6 +12,7 @@ and the host-facing digest.
 import inspect
 import json
 import os
+import sys
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -466,8 +467,11 @@ def test_error_bundle_empty_nominations_list_fails_closed(tmp_path):
 
 
 @pytest.mark.skipif(
-    hasattr(os, "geteuid") and os.geteuid() == 0,
-    reason="root ignores directory permission bits",
+    sys.platform == "win32" or (hasattr(os, "geteuid") and os.geteuid() == 0),
+    reason=(
+        "directory permission bits do not fail the write here: root ignores them, "
+        "and on Windows chmod 0o500 leaves the Administrators ACL writable"
+    ),
 )
 def test_write_bundle_unwritable_dir_is_contract_error_not_traceback(tmp_path):
     """A locked/read-only/full state dir must be the protocol's clean exit-2

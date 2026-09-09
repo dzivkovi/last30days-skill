@@ -47,6 +47,7 @@ def _bash_major(bash_path: str) -> int:
         [bash_path, "-c", 'echo "${BASH_VERSINFO[0]}"'],
         capture_output=True,
         text=True,
+        encoding="utf-8",
         timeout=10,
         check=False,
     )
@@ -112,6 +113,7 @@ def _run_hook(
         [bash_path, str(HOOK)],
         capture_output=True,
         text=True,
+        encoding="utf-8",
         env=env,
         cwd=str(cwd),
         timeout=30,

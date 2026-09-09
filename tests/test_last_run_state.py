@@ -20,6 +20,16 @@ LAST30DAYS_SCRIPT = REPO_ROOT / "skills" / "last30days" / "scripts" / "last30day
 SKILL_MD = REPO_ROOT / "skills" / "last30days" / "SKILL.md"
 
 
+def _bash() -> str:
+    """Absolute bash path.
+
+    Not bare "bash": on Windows CreateProcess searches System32 (WSL's
+    bash.exe) before PATH, and the WSL shell sees neither this process's
+    environment nor its Windows paths.
+    """
+    return shutil.which("bash") or "bash"
+
+
 def run_last30days(topic: str, env: dict[str, str]) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [sys.executable, str(LAST30DAYS_SCRIPT), topic, "--mock", "--emit=json"],
@@ -347,11 +357,12 @@ class LastRunStateTests(unittest.TestCase):
             env["LAST30DAYS_CONFIG_DIR"] = str(config_dir)
 
             result = subprocess.run(
-                ["bash", "hooks/scripts/check-config.sh"],
+                [_bash(), "hooks/scripts/check-config.sh"],
                 cwd=REPO_ROOT,
                 env=env,
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
                 check=False,
             )
 
@@ -367,11 +378,12 @@ class LastRunStateTests(unittest.TestCase):
             env["ENV_SCRAPECREATORS_API_KEY"] = "sk-test"
 
             result = subprocess.run(
-                ["bash", "hooks/scripts/check-config.sh"],
+                [_bash(), "hooks/scripts/check-config.sh"],
                 cwd=REPO_ROOT,
                 env=env,
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
                 check=False,
             )
 
@@ -396,11 +408,12 @@ class LastRunStateTests(unittest.TestCase):
             env["HOME"] = str(home)
 
             result = subprocess.run(
-                ["bash", "hooks/scripts/check-config.sh"],
+                [_bash(), "hooks/scripts/check-config.sh"],
                 cwd=REPO_ROOT,
                 env=env,
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
                 check=False,
             )
 
@@ -424,11 +437,12 @@ class LastRunStateTests(unittest.TestCase):
             env.pop(key, None)
         env.update(env_overrides)
         return subprocess.run(
-            ["bash", "hooks/scripts/check-config.sh"],
+            [_bash(), "hooks/scripts/check-config.sh"],
             cwd=REPO_ROOT,
             env=env,
             capture_output=True,
             text=True,
+            encoding="utf-8",
             check=False,
         )
 
@@ -493,11 +507,12 @@ class LastRunStateTests(unittest.TestCase):
             env["LAST30DAYS_CONFIG_DIR"] = str(config_dir)
 
             result = subprocess.run(
-                ["bash", "hooks/scripts/check-config.sh"],
+                [_bash(), "hooks/scripts/check-config.sh"],
                 cwd=REPO_ROOT,
                 env=env,
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
                 check=False,
             )
 
@@ -540,6 +555,11 @@ class TestSkillMdFirstRunReference(unittest.TestCase):
 class TestCheckPermsAutoFix(unittest.TestCase):
     """check_perms should auto-fix loose .env permissions instead of warning only."""
 
+    @unittest.skipIf(
+        sys.platform == "win32",
+        "check_perms returns early on MINGW/MSYS: Git Bash stats in noacl mode, "
+        "so POSIX mode bits are synthesized and never loose",
+    )
     def test_loose_env_is_tightened_by_check_perms(self):
         with tempfile.TemporaryDirectory() as tmp:
             config_dir = Path(tmp) / ".config" / "last30days"
@@ -553,11 +573,12 @@ class TestCheckPermsAutoFix(unittest.TestCase):
             env["LAST30DAYS_CONFIG_DIR"] = str(config_dir)
 
             result = subprocess.run(
-                ["bash", "hooks/scripts/check-config.sh"],
+                [_bash(), "hooks/scripts/check-config.sh"],
                 cwd=REPO_ROOT,
                 env=env,
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
                 check=False,
             )
 

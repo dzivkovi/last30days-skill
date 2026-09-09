@@ -13,12 +13,21 @@ from __future__ import annotations
 import os
 import stat
 import subprocess
+import sys
 from pathlib import Path
 from unittest import mock
 
 import pytest
 
 from lib import health
+
+posix_only = pytest.mark.skipif(
+    sys.platform == "win32",
+    reason=(
+        "POSIX-only: shebang scripts without a PATHEXT extension never resolve "
+        "through shutil.which on Windows, and this machine IS the 'nt' branch"
+    ),
+)
 
 
 @pytest.fixture(autouse=True)
@@ -126,6 +135,7 @@ class TestBroken:
         assert "printing-press-library" in probe.prescription
         assert "install digg --cli-only" in probe.prescription
 
+    @posix_only
     def test_real_stale_shim_on_disk(self, tmp_path, monkeypatch):
         """Integration: a real file whose shebang interpreter is gone (#692)."""
         shim = tmp_path / "fake-pp-cli"
@@ -170,6 +180,7 @@ class TestOk:
         assert probe.prescription == ""
         assert "2026.06.09" in probe.detail
 
+    @posix_only
     def test_real_healthy_binary_end_to_end(self, tmp_path, monkeypatch):
         """Integration: a real executable on a real PATH, no mocks."""
         binary = tmp_path / "fake-pp-cli"
@@ -282,6 +293,7 @@ class TestWindowsPrintingPressCandidates:
              mock.patch.dict(os.environ, env_clean, clear=True):
             assert health.windows_printing_press_bin_dir() is None
 
+    @posix_only
     def test_posix_has_no_windows_dir(self, tmp_path):
         with mock.patch.dict(os.environ, {"LOCALAPPDATA": str(tmp_path)}):
             assert health.windows_printing_press_bin_dir() is None

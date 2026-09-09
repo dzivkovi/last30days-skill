@@ -496,13 +496,12 @@ def test_independent_fts_indexes_merge_by_reciprocal_rank(tmp_path):
     ]
     connection = mock.MagicMock()
     connection.execute.return_value.fetchall.return_value = brief_rows
-    connection_context = mock.MagicMock()
-    connection_context.__enter__.return_value = connection
     db_path = tmp_path / "library.db"
     db_path.touch()
 
+    # _connect returns a live connection; search() wraps it in contextlib.closing.
     with mock.patch.object(
-        library_index, "_connect", return_value=connection_context
+        library_index, "_connect", return_value=connection
     ), mock.patch.object(
         library_index,
         "_search_store_sightings",

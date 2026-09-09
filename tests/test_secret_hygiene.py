@@ -2,9 +2,17 @@
 
 import os
 import stat
+import sys
 from pathlib import Path
 
+import pytest
+
 from lib import env, setup_wizard
+
+posix_modes_only = pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="POSIX file modes: Windows has no 0o600 equivalent for os.chmod",
+)
 
 
 def _mode(path: Path) -> int:
@@ -12,12 +20,14 @@ def _mode(path: Path) -> int:
 
 
 class TestSecureEnvWrite:
+    @posix_modes_only
     def test_new_env_file_is_0600(self, tmp_path):
         env_path = tmp_path / "cfg" / ".env"
         assert setup_wizard.write_setup_config(env_path, from_browser="auto") is True
         assert env_path.exists()
         assert _mode(env_path) == 0o600
 
+    @posix_modes_only
     def test_existing_loose_file_tightened_to_0600(self, tmp_path):
         env_path = tmp_path / ".env"
         env_path.write_text("EXISTING_KEY=value\n", encoding="utf-8")

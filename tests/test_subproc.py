@@ -187,8 +187,13 @@ class TestRunWithTimeout(unittest.TestCase):
 
         fake = _FakeProc()
         with patch.object(subproc.subprocess, "Popen", return_value=fake), \
-             patch.object(subproc.os, "getpgid", lambda pid: pid), \
-             patch.object(subproc.os, "killpg", side_effect=AttributeError("no killpg on Windows")):
+             patch.object(subproc.os, "getpgid", lambda pid: pid, create=True), \
+             patch.object(
+                 subproc.os,
+                 "killpg",
+                 side_effect=AttributeError("no killpg on Windows"),
+                 create=True,
+             ):
             with self.assertRaises(subproc.SubprocTimeout):
                 subproc.run_with_timeout(["x"], timeout=1)
         # Both the primary and escalation paths must have fallen back to kill().

@@ -33,10 +33,14 @@ def _run_hook(env_overrides: dict[str, str], cwd: Path | None = None) -> subproc
     for k in ("LAST30DAYS_MEMORY_DIR", "SETUP_COMPLETE", "LAST30DAYS_CONFIG_DIR"):
         env.pop(k, None)
     env.update(env_overrides)
+    # Absolute path, not bare "bash": on Windows CreateProcess searches System32
+    # (WSL's bash.exe) before PATH, and WSL sees neither the env nor the paths.
+    bash_path = shutil.which("bash") or "bash"
     return subprocess.run(
-        ["bash", str(HOOK)],
+        [bash_path, str(HOOK)],
         capture_output=True,
         text=True,
+        encoding="utf-8",
         env=env,
         cwd=str(cwd) if cwd else None,
         timeout=30,

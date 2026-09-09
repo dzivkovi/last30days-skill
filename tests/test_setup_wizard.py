@@ -2,6 +2,7 @@
 
 import os
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 from unittest.mock import patch, MagicMock
@@ -9,6 +10,19 @@ from unittest.mock import patch, MagicMock
 import pytest
 
 from lib import setup_wizard
+
+posix_modes_only = pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="POSIX file modes: os.chmod cannot express 0o600 or revoke write on Windows",
+)
+
+posix_path_hint_only = pytest.mark.skipif(
+    sys.platform == "win32",
+    reason=(
+        "PATH hint is $HOME-relative only on POSIX; the Windows form is covered by "
+        "test_digg_bin_dir_hint_windows_returns_absolute_parent"
+    ),
+)
 
 
 class _NtOs:
@@ -277,6 +291,9 @@ class TestDiggAutoInstall:
     def _empty_home(tmp_path, monkeypatch):
         monkeypatch.delenv("GOPATH", raising=False)
         monkeypatch.setenv("HOME", str(tmp_path))
+        # Path.home() reads USERPROFILE on Windows, HOME elsewhere; set both so
+        # the redirect actually takes on every platform.
+        monkeypatch.setenv("USERPROFILE", str(tmp_path))
 
     @patch("lib.cookie_extract.extract_cookies_with_source", return_value=None)
     @patch("shutil.which")
@@ -537,6 +554,7 @@ class TestWriteSetupConfig:
 class TestWriteApiKey:
     """Tests for write_api_key() — persisting the ScrapeCreators signup key."""
 
+    @posix_modes_only
     def test_writes_key_with_secret_permissions(self):
         """Key is written and the file is 0o600 (owner read/write only)."""
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -607,6 +625,7 @@ class TestWriteApiKey:
             assert setup_wizard.write_api_key(env_path, "") is False
             assert not env_path.exists()
 
+    @posix_modes_only
     def test_unwritable_target_returns_false(self):
         """Unwritable target dir -> False, no exception escapes."""
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -768,6 +787,7 @@ class TestGetSetupStatusText:
         assert "Digg CLI install failed" in text
         assert "printing-press-library" in text
 
+    @posix_path_hint_only
     def test_status_text_digg_installed_off_path(self):
         home = Path.home()
         digg_path = str(home / ".local" / "bin" / "digg-pp-cli")
@@ -780,6 +800,7 @@ class TestGetSetupStatusText:
         assert "$HOME/.local/bin" in text
         assert "now active" not in text.lower()
 
+    @posix_path_hint_only
     def test_status_text_digg_installed_off_path_legacy_go_bin(self):
         """PATH hint names the actual install dir as $HOME-relative, not ~/.local/bin."""
         home = Path.home()

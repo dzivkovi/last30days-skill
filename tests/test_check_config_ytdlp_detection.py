@@ -18,11 +18,20 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
 
 HOOK = Path(__file__).resolve().parents[1] / "hooks" / "scripts" / "check-config.sh"
+
+posix_fake_bin_only = pytest.mark.skipif(
+    sys.platform == "win32",
+    reason=(
+        "fake-PATH fixtures are POSIX-shaped: extensionless shebang stubs joined "
+        "with ':' cannot be resolved by shutil.which or by Git Bash's MSYS PATH"
+    ),
+)
 
 
 def _run_hook(env_overrides: dict[str, str], path_override: str | None = None) -> subprocess.CompletedProcess:
@@ -51,6 +60,7 @@ def _run_hook(env_overrides: dict[str, str], path_override: str | None = None) -
         [bash_path, str(HOOK)],
         capture_output=True,
         text=True,
+        encoding="utf-8",
         env=env,
         timeout=30,
     )
@@ -108,6 +118,7 @@ def _parse_source_count(stdout: str) -> int:
     return int(match.group(1))
 
 
+@posix_fake_bin_only
 @pytest.mark.skipif(shutil.which("bash") is None, reason="bash not on PATH")
 def test_new_user_with_ytdlp_says_youtube_works(tmp_path: Path):
     """A new user with yt-dlp on PATH should see YouTube flagged as already-working."""
@@ -163,6 +174,7 @@ def test_new_user_without_ytdlp_unchanged_welcome(tmp_path: Path):
     )
 
 
+@posix_fake_bin_only
 @pytest.mark.skipif(shutil.which("bash") is None, reason="bash not on PATH")
 def test_setup_done_user_source_count_includes_ytdlp(tmp_path: Path):
     """Regression: the setup-done path must count YouTube when yt-dlp is on PATH.
@@ -207,6 +219,7 @@ def test_setup_done_user_source_count_includes_ytdlp(tmp_path: Path):
     )
 
 
+@posix_fake_bin_only
 @pytest.mark.skipif(shutil.which("bash") is None, reason="bash not on PATH")
 def test_keychain_credentials_avoid_new_user_welcome(tmp_path: Path):
     """macOS Keychain credentials should count as configured for the status hook."""

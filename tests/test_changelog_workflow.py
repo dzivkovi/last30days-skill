@@ -6,6 +6,7 @@ import importlib.util
 import json
 import os
 import re
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -72,12 +73,16 @@ def _parse_release_version_from_message(message: str, sed_expr: str) -> str:
     """Run the same sed pipeline tag-release.yml uses to extract VERSION."""
     result = subprocess.run(
         [
-            "bash",
+            # Absolute path, not bare "bash": on Windows CreateProcess searches
+            # System32 (WSL's bash.exe) before PATH, and WSL sees neither this
+            # process's environment nor its paths.
+            shutil.which("bash") or "bash",
             "-c",
             f"printf '%s\\n' \"${{HEAD_MSG}}\" | sed -n '{sed_expr}' | head -n1",
         ],
         capture_output=True,
         text=True,
+        encoding="utf-8",
         check=True,
         env={**os.environ, "HEAD_MSG": message},
     )
