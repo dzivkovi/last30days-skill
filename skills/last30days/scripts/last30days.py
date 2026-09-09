@@ -2883,12 +2883,11 @@ def _run_library_search(
                 if args.save_dir else library_index.DEFAULT_LIBRARY_DB
             ),
             # A scoped search must never merge in the shared store: one
-            # client's sightings would leak into another client's scope. A
-            # scoped store is read only if it exists inside the save dir.
-            store_db_path=(
-                memory_dir.resolve() / "research.db"
-                if args.save_dir else library_index.DEFAULT_STORE_DB
-            ),
+            # client's sightings would leak into another client's scope. The
+            # same resolver that picks the store research WRITES picks the one
+            # search READS: explicit --db, else the save-dir scoped store (read
+            # only if it exists inside the save dir), else the shared default.
+            store_db_path=_scoped_store_db(args) or library_index.DEFAULT_STORE_DB,
         )
     except library_index.LibrarySearchUnavailable as exc:
         sys.stderr.write(f"[last30days] Library search unavailable: {exc}.\n")

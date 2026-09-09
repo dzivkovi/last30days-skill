@@ -207,6 +207,41 @@ class ScopedStoreDbResolverTests(unittest.TestCase):
         self.assertIsNone(self._resolve(db=None, save_dir=None))
 
 
+class LibrarySearchStoreTests(unittest.TestCase):
+    """``library search`` reads the same store research writes."""
+
+    def _store_db_passed(self, **fields):
+        import argparse
+        from unittest import mock
+
+        import last30days
+        from lib import library_index
+
+        base = dict(publish=False, publish_html=False, emit="compact", output=None, save_dir=None, db=None)
+        base.update(fields)
+        args = argparse.Namespace(**base)
+        with mock.patch.object(
+            library_index, "sync_and_search", return_value=([], mock.Mock(notes=[]))
+        ) as search:
+            rc = last30days._run_library_search(args, {}, "MCP servers")
+        self.assertEqual(rc, 0)
+        return search.call_args.kwargs["store_db_path"]
+
+    def test_explicit_db_is_searched(self) -> None:
+        self.assertEqual(self._store_db_passed(db="~/x/flag.db", save_dir="/tmp/mem"), Path("~/x/flag.db").expanduser())
+
+    def test_save_dir_scoped_store_when_no_db(self) -> None:
+        self.assertEqual(
+            self._store_db_passed(save_dir="/tmp/mem"),
+            Path("/tmp/mem").expanduser().resolve() / "research.db",
+        )
+
+    def test_shared_default_when_nothing_set(self) -> None:
+        from lib import library_index
+
+        self.assertEqual(self._store_db_passed(), library_index.DEFAULT_STORE_DB)
+
+
 class ResolveStoreDbTests(unittest.TestCase):
     """``_resolve_store_db`` is the one place the flag/env/.env chain is read."""
 
