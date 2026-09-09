@@ -687,7 +687,7 @@ def _telegram_record(config):
             status="unconfigured",
             requires=requires,
             fix="set TELEGRAM_SOURCES to a comma-separated list of public channel handles",
-            note="key present and opt-in active, but no channels configured",
+            note=f"opt-in active (backend would be {backend}), but no channels configured",
         )
     return _record(
         status="opt-in",

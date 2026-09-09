@@ -19,6 +19,13 @@ CHANNEL_PAGE = (FIXTURES / "tme_channel.html").read_text(encoding="utf-8")
 LANDING_PAGE = (FIXTURES / "tme_landing.html").read_text(encoding="utf-8")
 
 
+@pytest.fixture(autouse=True)
+def _no_ambient_pin(monkeypatch):
+    """The pin is read from config only, but keep the process env clean so a
+    developer's shell cannot leak into env.get_config()-based tests."""
+    monkeypatch.delenv(telegram.BACKEND_PIN_VAR, raising=False)
+
+
 def _pages(mapping: dict[str, str]):
     calls: list[str] = []
 
@@ -121,7 +128,7 @@ def test_search_keyless_stops_when_page_is_all_old(monkeypatch):
 def test_search_keyless_fetch_failure_is_empty_not_error(monkeypatch):
     monkeypatch.setattr(telegram.http, "get_text", lambda url, **kwargs: None)
 
-    result = telegram.search_telegram("x", "2026-08-01", "2026-09-09", token=None, config={"TELEGRAM_SOURCES": "gone"})
+    result = telegram.search_telegram("x", "2026-08-01", "2026-09-09", token=None, config={"TELEGRAM_SOURCES": "gonechan"})
 
     assert result["items"] == [] and "error" not in result
 
@@ -142,12 +149,12 @@ def test_search_with_key_uses_scrapecreators(monkeypatch):
 
     def mock_get(url, **kwargs):
         seen.append(url)
-        return {"success": True, "channel": {"handle": "c"}, "posts": [], "has_more": False}
+        return {"success": True, "channel": {"handle": "testchan"}, "posts": [], "has_more": False}
 
     monkeypatch.setattr(telegram.http, "get", mock_get)
     monkeypatch.setattr(telegram.http, "get_text", lambda url, **kwargs: pytest.fail("keyless must not run"))
 
-    result = telegram.search_telegram("agents", "2026-08-01", "2026-09-09", token="k", config={"TELEGRAM_SOURCES": "c"})
+    result = telegram.search_telegram("agents", "2026-08-01", "2026-09-09", token="k", config={"TELEGRAM_SOURCES": "testchan"})
 
     assert result["backend"] == telegram.BACKEND_SCRAPECREATORS and seen and "scrapecreators.com" in seen[0]
 

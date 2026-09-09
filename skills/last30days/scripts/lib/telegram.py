@@ -15,8 +15,10 @@ API docs: https://docs.scrapecreators.com/v1/telegram/channel/posts
 import math
 import os
 import re
+import time
 from html.parser import HTMLParser
 from typing import Any
+from urllib.parse import quote
 
 from . import dates, http, log
 from .relevance import token_overlap_relevance as _compute_relevance
@@ -67,7 +69,7 @@ def parse_channel_handle(raw: str) -> str:
         handle = handle[1:]
         if not handle:
             raise InvalidChannelHandle("Empty handle after @ prefix")
-        return handle
+        return _validated_username(handle, raw)
 
     url_match = re.match(
         r"(?:https?://)?(?:www\.)?t\.me/(?:s/)?([^/?#]+)",
@@ -80,13 +82,24 @@ def parse_channel_handle(raw: str) -> str:
             raise InvalidChannelHandle(
                 f"Private joinchat links are not supported: {raw}"
             )
-        return extracted
+        return _validated_username(extracted, raw)
 
     if "joinchat" in handle.lower():
         raise InvalidChannelHandle(
             f"Private joinchat links are not supported: {raw}"
         )
 
+    return _validated_username(handle, raw)
+
+
+# Telegram public usernames: 5-32 characters of [A-Za-z0-9_]. Anything else
+# would be interpolated into a URL path (keyless) or an API query (paid).
+_USERNAME = re.compile(r"^[A-Za-z0-9_]{5,32}$")
+
+
+def _validated_username(handle: str, raw: str) -> str:
+    if not _USERNAME.match(handle):
+        raise InvalidChannelHandle(f"Not a valid public channel username: {raw}")
     return handle
 
 
@@ -255,15 +268,37 @@ BACKEND_SCRAPECREATORS = "scrapecreators"
 BACKEND_KEYLESS = "keyless"
 BACKEND_ORDER = (BACKEND_SCRAPECREATORS, BACKEND_KEYLESS)
 _COUNT_SUFFIX = {"K": 1_000, "M": 1_000_000, "B": 1_000_000_000}
+# The preview pages are an unmetered public surface: never fetch more than this
+# many per channel per run, and pause between pages.
+KEYLESS_MAX_PAGES = 20
+KEYLESS_PAGE_DELAY_SECONDS = 0.4
 _VOID_TAGS = {"br", "img", "hr", "input", "meta", "link", "source", "wbr", "area", "base", "col", "embed", "param", "track"}
+# Classes that can never sit inside a captured text block; meeting one while a
+# capture is open means a tag was left unclosed, so the capture ends there.
+_STRUCTURAL = {
+    "tgme_widget_message_footer",
+    "tgme_widget_message_info",
+    "tgme_widget_message_meta",
+    "tgme_widget_message_reactions",
+    "tgme_widget_message_views",
+    "tgme_widget_message_date",
+    "tgme_widget_message_bubble",
+    "tgme_widget_message_author",
+    "tgme_widget_message_wrap",
+    "tgme_widget_message",
+}
 
 
 def resolve_backend(config: dict[str, Any], token: str | None = None) -> str:
     """``LAST30DAYS_TELEGRAM_BACKEND`` pin wins; else ScrapeCreators when its key is
-    present, else the keyless preview pages."""
-    pin = str(config.get(BACKEND_PIN_VAR) or os.environ.get(BACKEND_PIN_VAR) or "").strip().lower()
+    present, else the keyless preview pages. Reads ``config`` only: the engine
+    loads that variable from the process environment and ``.env`` into config,
+    and ``backends.py`` predicts from the same dict, so the two cannot disagree."""
+    pin = str(config.get(BACKEND_PIN_VAR) or "").strip().lower()
     if pin in BACKEND_ORDER:
         return pin
+    if pin:
+        _log(f"Ignoring unknown {BACKEND_PIN_VAR}={pin!r} (expected scrapecreators or keyless)")
     if token or config.get("SCRAPECREATORS_API_KEY"):
         return BACKEND_SCRAPECREATORS
     return BACKEND_KEYLESS
@@ -280,7 +315,7 @@ def parse_count(text: Any) -> int:
         raw = raw[:-1]
     try:
         return int(float(raw) * multiplier)
-    except ValueError:
+    except (ValueError, OverflowError):
         return 0
 
 
@@ -301,6 +336,7 @@ class _TmePageParser(HTMLParser):
         super().__init__(convert_charrefs=True)
         self.handle = handle
         self.posts: list[dict[str, Any]] = []
+        self.wrappers = 0  # raw message blocks seen, before the text/service filter
         self.before: str | None = None
         self.channel_name = ""
         self.subscriber_count = 0
@@ -333,6 +369,13 @@ class _TmePageParser(HTMLParser):
         attributes = {key: (value or "") for key, value in attrs}
         classes = attributes.get("class", "").split()
         if tag == "div" and "tgme_widget_message" in classes and attributes.get("data-post"):
+            # Recovery: an unbalanced tag in the previous block must not swallow
+            # this one, so a new message always closes whatever was open.
+            if self._capture is not None:
+                self._finish_capture()
+            if self._post is not None:
+                self._finish_post()
+            self.wrappers += 1
             post_id = attributes["data-post"].rsplit("/", 1)[-1]
             self._post = {
                 "id": post_id,
@@ -348,16 +391,25 @@ class _TmePageParser(HTMLParser):
             self._post_depth = self._depth
             return
         if tag == "a" and "tme_messages_more" in classes:
+            # A page carries a "before" anchor (older) and, past page one, an
+            # "after" anchor (newer). Only the former is a cursor, and the first
+            # one wins; the after-anchor must never blank it.
             before = attributes.get("data-before", "")
             href = attributes.get("href", "")
             if not before and "before=" in href:
                 before = href.split("before=", 1)[1].split("&", 1)[0]
-            self.before = before or None
+            if before and self.before is None and before.isdigit():
+                self.before = before
             return
         if self._capture is not None:
-            if tag in ("p", "div"):
-                self._buf.append("\n")
-            return
+            # An unclosed tag inside the text block would otherwise let the
+            # capture run into the footer. Any structural element ends it.
+            if classes and _STRUCTURAL.intersection(classes):
+                self._finish_capture()
+            else:
+                if tag in ("p", "div"):
+                    self._buf.append("\n")
+                return
         if tag == "div" and "tgme_channel_info_header_title" in classes:
             self._start_capture("channel_name")
         elif tag == "span" and "counter_value" in classes:
@@ -388,9 +440,17 @@ class _TmePageParser(HTMLParser):
             return
         if self._capture is not None and self._depth == self._capture_depth:
             self._finish_capture()
-        if self._post is not None and self._depth == self._post_depth:
-            self._finish_post()
+        # A post ends when the next message block starts or the document ends
+        # (see the recovery in handle_starttag and close()); depth is not
+        # trusted for that boundary because one unbalanced tag would shift it.
         self._depth = max(0, self._depth - 1)
+
+    def close(self) -> None:
+        super().close()
+        if self._capture is not None:
+            self._finish_capture()
+        if self._post is not None:
+            self._finish_post()
 
     # -- captures ---------------------------------------------------------
 
@@ -448,6 +508,7 @@ def parse_tme_page(page: str, handle: str) -> dict[str, Any]:
         },
         "posts": parser.posts,
         "before": parser.before,
+        "wrappers": parser.wrappers,
     }
 
 
@@ -463,35 +524,60 @@ def _fetch_channel_posts_keyless(
     date cutoff or the page cap. Never raises: a fetch failure or a landing page
     ends the channel with a log line."""
     fetch_text = fetch_text or (lambda url: http.get_text(url, timeout=30, retries=1, accept="text/html"))
+    max_pages = min(max_pages, KEYLESS_MAX_PAGES)
     items: list[dict[str, Any]] = []
+    wrappers_seen = 0
     before: str | None = None
+    seen_cursors: set[str] = set()
     pages_fetched = 0
     while pages_fetched < max_pages:
-        url = f"{TME_BASE}/{handle}" + (f"?before={before}" if before else "")
+        url = f"{TME_BASE}/{quote(handle, safe='')}" + (f"?before={quote(before, safe='')}" if before else "")
+        if pages_fetched:
+            time.sleep(KEYLESS_PAGE_DELAY_SECONDS)
         _log(f"Fetching t.me/s/{handle} (page {pages_fetched + 1}/{max_pages}, keyless)")
         page = fetch_text(url)
         if page is None:
             _log(f"Could not fetch t.me/s/{handle}")
             break
         parsed = parse_tme_page(page, handle)
+        pages_fetched += 1
+        wrappers_seen += parsed["wrappers"]
         posts = parsed["posts"]
-        if not posts:
+        if not posts and not parsed["wrappers"]:
             _log(f"No public posts at t.me/s/{handle} (private, empty, or nonexistent channel)")
             break
-        page_all_old = True
-        for idx, raw_post in enumerate(posts):
-            item = _parse_post(raw_post, parsed["channel"], topic, len(items) + idx)
-            items.append(item)
-            if item["date"] and item["date"] >= from_date:
-                page_all_old = False
-        pages_fetched += 1
+        page_all_old = not posts
+        if posts:
+            page_all_old = True
+            # Pages list oldest first; rank newest first so the recency index
+            # (rank_score in _parse_post) means the same as on the paid path.
+            for idx, raw_post in enumerate(reversed(posts)):
+                item = _parse_post(raw_post, parsed["channel"], topic, len(items) + idx)
+                items.append(item)
+                if item["date"] and item["date"] >= from_date:
+                    page_all_old = False
+        else:
+            _log(f"Page {pages_fetched} of t.me/s/{handle} had message blocks but no text posts; continuing")
+            page_all_old = False
         if page_all_old:
             _log(f"All posts on page older than {from_date}, stopping pagination")
             break
-        if not parsed["before"]:
+        cursor = parsed["before"]
+        if not cursor or cursor in seen_cursors:
             break
-        before = parsed["before"]
-    return items
+        seen_cursors.add(cursor)
+        before = cursor
+    else:
+        if before:
+            _log(f"Page cap reached for t.me/s/{handle} ({max_pages}); older posts not fetched")
+    items_meta = items  # keep the name explicit for the caller
+    _KEYLESS_WRAPPERS[handle] = wrappers_seen
+    return items_meta
+
+
+# Per-run bookkeeping so search_telegram can tell "channel is empty" from
+# "Telegram changed its markup": message blocks seen but nothing parsed.
+_KEYLESS_WRAPPERS: dict[str, int] = {}
 
 
 def search_telegram(
@@ -563,6 +649,22 @@ def search_telegram(
                 max_pages=max_pages,
             )
         all_items.extend(channel_items)
+
+    if backend == BACKEND_KEYLESS:
+        blocks = sum(_KEYLESS_WRAPPERS.get(handle, 0) for handle in channels)
+        _KEYLESS_WRAPPERS.clear()
+        if blocks and not all_items:
+            return {
+                "items": [],
+                "backend": backend,
+                "error": f"t.me/s markup not recognized ({blocks} message block(s) seen, 0 parsed)",
+            }
+        if all_items and all(item["date"] is None for item in all_items):
+            return {
+                "items": [],
+                "backend": backend,
+                "error": "t.me/s timestamps not recognized (every post undated)",
+            }
 
     in_range = [
         item for item in all_items

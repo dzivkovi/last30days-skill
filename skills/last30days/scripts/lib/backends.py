@@ -623,7 +623,7 @@ def _resolve_alternative(
     if pin and pin not in ("auto", "none") and pin in by_name:
         pin_name = pin
     elif descriptor.pin_var:
-        raw = (config.get(descriptor.pin_var) or "").lower()
+        raw = str(config.get(descriptor.pin_var) or "").strip().lower()
         if raw in by_name:
             pin_name = raw
 
