@@ -176,6 +176,37 @@ class GetDbPathResolverTests(unittest.TestCase):
             os.environ.pop("LAST30DAYS_CONFIG_DIR", None)
 
 
+class ScopedStoreDbResolverTests(unittest.TestCase):
+    """``_scoped_store_db`` is the single resolver feeding ``store.scoped_db``.
+
+    Explicit ``--db`` (already env/.env-resolved by ``_main``) beats save-dir
+    scoping, which beats the shared default (``None``).
+    """
+
+    @staticmethod
+    def _resolve(**fields):
+        import argparse
+
+        import last30days
+
+        return last30days._scoped_store_db(argparse.Namespace(**fields))
+
+    def test_explicit_db_wins_over_save_dir(self) -> None:
+        got = self._resolve(db="~/x/flag.db", save_dir="/tmp/mem")
+        self.assertEqual(got, Path("~/x/flag.db").expanduser())
+
+    def test_save_dir_scopes_when_no_db(self) -> None:
+        got = self._resolve(db=None, save_dir="/tmp/mem")
+        self.assertEqual(got, Path("/tmp/mem").expanduser().resolve() / "research.db")
+
+    def test_empty_db_is_no_override(self) -> None:
+        got = self._resolve(db="", save_dir=None)
+        self.assertIsNone(got)
+
+    def test_nothing_set_keeps_shared_store(self) -> None:
+        self.assertIsNone(self._resolve(db=None, save_dir=None))
+
+
 class DbFlagEngineTests(unittest.TestCase):
     """End-to-end engine invocations confirming --db routes persistence."""
 

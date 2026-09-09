@@ -580,16 +580,17 @@ def read_synthesis_file(path: str) -> str:
 
 
 def _scoped_store_db(args: argparse.Namespace) -> Path | None:
-    """Scoped runs write findings inside the save dir, matching scoped reads.
+    """Resolve the store every ``store.scoped_db`` block in this run targets.
 
-    An explicit store path (``--db`` / ``LAST30DAYS_DB_PATH``, pinned into
-    ``store._db_override`` by main()) wins over save-dir scoping: orchestrators
-    export both a memory dir and a dedicated DB, and the DB is the contract.
+    Precedence: an explicit ``--db`` (already env/.env-resolved by ``_main``)
+    wins, because orchestrators export both a memory dir and a dedicated DB
+    and the DB is the contract; otherwise scoped runs write findings inside
+    the save dir, matching scoped reads; otherwise ``None`` keeps the shared
+    store. One resolver, one code path.
     """
-    import store
-
-    if store._db_override is not None:
-        return store._db_override
+    explicit = getattr(args, "db", None)
+    if explicit:
+        return Path(explicit).expanduser()
     save_dir = getattr(args, "save_dir", None)
     if save_dir:
         return Path(save_dir).expanduser().resolve() / "research.db"
@@ -2985,19 +2986,14 @@ def _main(
         args.save_dir = env_val if env_val is not None else config.get("LAST30DAYS_MEMORY_DIR")
 
     # Env-var + config fallback for --db, mirroring the --save-dir block above.
-    # Resolved path is pinned into store._db_override so every store.* helper
-    # (and persist_report below) targets the same DB. Empty strings collapse
-    # to "no override", falling back to LAST30DAYS_DB_PATH (which store.py
-    # also reads) and ultimately the default. The `is None` check on args.db
-    # preserves the flag-wins-over-env-and-config precedence, matching the
-    # save-dir contract documented in CONFIGURATION.md.
-    db_choice: str | None = args.db
-    if db_choice is None:
+    # The resolved value lives on args.db; _scoped_store_db() turns it into the
+    # store.scoped_db() target for every store access in this run, so there is
+    # no second override path. Empty strings collapse to "no override". The
+    # `is None` check preserves flag > env > .env > default.
+    if args.db is None:
         env_db = os.environ.get("LAST30DAYS_DB_PATH")
-        db_choice = env_db if env_db is not None else config.get("LAST30DAYS_DB_PATH")
-    if db_choice:
-        import store as _store
-        _store._db_override = Path(db_choice).expanduser()
+        args.db = env_db if env_db is not None else config.get("LAST30DAYS_DB_PATH")
+    args.db = args.db or None
 
     # Surface SSH-routing config as an env var so library modules (e.g.
     # youtube_yt) can read it without taking a config dependency. This
