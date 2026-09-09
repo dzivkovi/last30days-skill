@@ -153,6 +153,7 @@ SOURCE_ORDER = (
     "hackernews",
     "polymarket",
     "github",
+    "github_trending",
     "digg",
     "techmeme",
     "arxiv",
@@ -576,6 +577,19 @@ def _github_record(config):
                    requires="none (GITHUB_TOKEN or gh CLI optional)")
 
 
+def _github_trending_record(config):
+    requires = "INCLUDE_SOURCES=github_trending or --search github_trending; GITHUB_TOKEN optional (raises the search rate limit)"
+    if "github_trending" in env.include_sources(config):
+        detail = "trending page + keyless repo search" + (", GITHUB_TOKEN present" if config.get("GITHUB_TOKEN") else "")
+        return _record(status=health.OK, requires=requires, detail=detail)
+    return _record(
+        status="opt-in",
+        requires=requires,
+        fix="add github_trending to INCLUDE_SOURCES, or pass --search github,github_trending for one run",
+        note="opt-in only; no key needed",
+    )
+
+
 def _digg_record(config):
     probe = health.probe_dependency("digg-pp-cli")
     requires = "digg-pp-cli on the agent-subprocess PATH"
@@ -877,6 +891,7 @@ _SOURCE_BUILDERS: Dict[str, Callable[[Dict[str, Any]], Dict[str, Any]]] = {
     "instagram": _instagram_record,
     "threads": _threads_record,
     "telegram": _telegram_record,
+    "github_trending": _github_trending_record,
     "bluesky": _bluesky_record,
     "truthsocial": _truthsocial_record,
     "perplexity": _perplexity_record,

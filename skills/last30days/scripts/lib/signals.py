@@ -20,6 +20,9 @@ SOURCE_QUALITY = {
     # Verified-purchase reviews on a live aggregate rating: high-quality
     # buyer evidence, a notch above Trustpilot's open review model.
     "amazon": 0.8,
+    # Trending page deltas and keyless repo search: editorial-grade counts,
+    # no conversation, so a notch under grounding.
+    "github_trending": 0.8,
     "reddit": 0.6,
     "x": 0.68,
     "bluesky": 0.66,
@@ -183,6 +186,7 @@ ENGAGEMENT_WEIGHTS: dict[str, list[tuple[str, float]]] = {
     "digg":         [("postCount", 0.40), ("uniqueAuthors", 0.30), ("rank_score", 0.30)],
     "trustpilot":   [("reviews", 1.0)],
     "amazon":       [("ratings", 1.0)],
+    "github_trending": [("stars_week", 0.5), ("stars", 0.3), ("forks", 0.2)],
 }
 
 

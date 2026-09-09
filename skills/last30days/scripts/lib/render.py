@@ -224,6 +224,7 @@ SOURCE_LABELS = {
     "xiaohongshu": "Xiaohongshu",
     "x": "X",
     "github": "GitHub",
+    "github_trending": "GitHub trending",
     "digg": "Digg",
     "arxiv": "arXiv",
     "techmeme": "Techmeme",

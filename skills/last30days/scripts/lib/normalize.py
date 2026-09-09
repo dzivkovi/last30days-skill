@@ -72,6 +72,7 @@ def normalize_source_items(
         "grounding": _normalize_grounding,
         "xiaohongshu": _normalize_grounding,
         "github": _normalize_github,
+        "github_trending": _normalize_github_trending,
         "perplexity": _normalize_grounding,
         "jobs": _normalize_jobs,
         "linkedin": _normalize_linkedin,
@@ -873,6 +874,40 @@ def _normalize_polymarket(
             "outcome_prices": item.get("outcome_prices") or [],
             "outcomes_remaining": item.get("outcomes_remaining"),
         },
+    )
+
+
+def _normalize_github_trending(
+    source: str,
+    item: dict[str, Any],
+    index: int,
+    from_date: str,
+    to_date: str,
+) -> schema.SourceItem:
+    """Repositories from the trending lane: the half (risers / new / both) rides in
+    ``container`` and ``metadata``; risers carry no date, new repos their creation date."""
+    repo = str(item.get("title") or "").strip()
+    description = str(item.get("snippet") or "").strip()
+    metadata = dict(item.get("metadata") or {})
+    parts = [repo.replace("/", " "), description, str(metadata.get("language") or ""), " ".join(metadata.get("topics") or [])]
+    date = item.get("date")
+    # Risers are stamped with the observation date, not a publication date.
+    confidence = "low" if metadata.get("half") == "risers" or not date else "high"
+    return _source_item(
+        item_id=str(item.get("id") or f"GT{index + 1}"),
+        source=source,
+        title=repo or f"GitHub repository {index + 1}",
+        body="\n".join(part for part in parts if part),
+        url=str(item.get("url") or ""),
+        author=str(item.get("author") or ""),
+        container=str(item.get("container") or ""),
+        published_at=date,
+        date_confidence=confidence,
+        engagement=item.get("engagement") or {},
+        relevance_hint=item.get("relevance", 0.5),
+        why_relevant=str(item.get("why_relevant") or ""),
+        snippet=description[:400],
+        metadata=metadata,
     )
 
 
