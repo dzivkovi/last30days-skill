@@ -579,6 +579,23 @@ def read_synthesis_file(path: str) -> str:
         raise SystemExit(2)
 
 
+def _resolve_store_db(args: argparse.Namespace, config: dict[str, Any]) -> None:
+    """Resolve ``--db`` onto ``args.db``: flag > ``LAST30DAYS_DB_PATH`` env > ``.env``.
+
+    Mirrors the ``--save-dir`` fallback: the ``is None`` check keeps an explicit
+    empty flag from falling through to the environment, and empty values
+    collapse to "no override". The resolved path is also published as
+    ``config["_LAST30DAYS_STORE_DB"]`` so the prior-run library context reads
+    the same store this run writes (pipeline._load_library_context).
+    """
+    if args.db is None:
+        env_db = os.environ.get("LAST30DAYS_DB_PATH")
+        args.db = env_db if env_db is not None else config.get("LAST30DAYS_DB_PATH")
+    args.db = args.db or None
+    if args.db:
+        config["_LAST30DAYS_STORE_DB"] = str(Path(args.db).expanduser())
+
+
 def _scoped_store_db(args: argparse.Namespace) -> Path | None:
     """Resolve the store every ``store.scoped_db`` block in this run targets.
 
@@ -2985,15 +3002,7 @@ def _main(
         env_val = os.environ.get("LAST30DAYS_MEMORY_DIR")
         args.save_dir = env_val if env_val is not None else config.get("LAST30DAYS_MEMORY_DIR")
 
-    # Env-var + config fallback for --db, mirroring the --save-dir block above.
-    # The resolved value lives on args.db; _scoped_store_db() turns it into the
-    # store.scoped_db() target for every store access in this run, so there is
-    # no second override path. Empty strings collapse to "no override". The
-    # `is None` check preserves flag > env > .env > default.
-    if args.db is None:
-        env_db = os.environ.get("LAST30DAYS_DB_PATH")
-        args.db = env_db if env_db is not None else config.get("LAST30DAYS_DB_PATH")
-    args.db = args.db or None
+    _resolve_store_db(args, config)
 
     # Surface SSH-routing config as an env var so library modules (e.g.
     # youtube_yt) can read it without taking a config dependency. This

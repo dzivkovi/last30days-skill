@@ -207,6 +207,49 @@ class ScopedStoreDbResolverTests(unittest.TestCase):
         self.assertIsNone(self._resolve(db=None, save_dir=None))
 
 
+class ResolveStoreDbTests(unittest.TestCase):
+    """``_resolve_store_db`` is the one place the flag/env/.env chain is read."""
+
+    def _run(self, *, flag, env, dotenv):
+        import argparse
+        from unittest import mock
+
+        import last30days
+
+        args = argparse.Namespace(db=flag)
+        config = {} if dotenv is None else {"LAST30DAYS_DB_PATH": dotenv}
+        environ = {} if env is None else {"LAST30DAYS_DB_PATH": env}
+        with mock.patch.dict(os.environ, environ, clear=False):
+            if env is None:
+                os.environ.pop("LAST30DAYS_DB_PATH", None)
+            last30days._resolve_store_db(args, config)
+        return args.db, config.get("_LAST30DAYS_STORE_DB")
+
+    def test_flag_wins_and_is_published_for_library_reads(self) -> None:
+        db, published = self._run(flag="~/flag.db", env="/env.db", dotenv="/dot.db")
+        self.assertEqual(db, "~/flag.db")
+        self.assertEqual(published, str(Path("~/flag.db").expanduser()))
+
+    def test_env_beats_dotenv_when_flag_absent(self) -> None:
+        db, _ = self._run(flag=None, env="/env.db", dotenv="/dot.db")
+        self.assertEqual(db, "/env.db")
+
+    def test_dotenv_used_when_flag_and_env_absent(self) -> None:
+        db, published = self._run(flag=None, env=None, dotenv="/dot.db")
+        self.assertEqual(db, "/dot.db")
+        self.assertEqual(published, str(Path("/dot.db")))
+
+    def test_empty_flag_is_explicit_no_override_and_skips_env(self) -> None:
+        db, published = self._run(flag="", env="/env.db", dotenv="/dot.db")
+        self.assertIsNone(db)
+        self.assertIsNone(published)
+
+    def test_empty_env_collapses_to_no_override(self) -> None:
+        db, published = self._run(flag=None, env="", dotenv=None)
+        self.assertIsNone(db)
+        self.assertIsNone(published)
+
+
 class DbFlagEngineTests(unittest.TestCase):
     """End-to-end engine invocations confirming --db routes persistence."""
 
@@ -295,6 +338,24 @@ class DbFlagEngineTests(unittest.TestCase):
             (save_dir / "research.db").exists(),
             msg="save-dir scoping overrode the explicit --db path",
         )
+
+    def test_env_db_with_memory_dir_is_the_orchestrator_shape(self) -> None:
+        """LAST30DAYS_DB_PATH + LAST30DAYS_MEMORY_DIR, no flags: findings land in
+        the env DB and no research.db appears inside the memory dir."""
+        mem = self.tmp / "mem"
+        mem.mkdir()
+        result = _run_engine(
+            topic="OpenAI",
+            extra_argv=[],
+            env_overrides={
+                "LAST30DAYS_CONFIG_DIR": "",
+                "LAST30DAYS_DB_PATH": str(self.env_db),
+                "LAST30DAYS_MEMORY_DIR": str(mem),
+            },
+        )
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        self.assertGreater(_count_findings(self.env_db), 0, msg=result.stderr)
+        self.assertFalse((mem / "research.db").exists(), msg="save-dir scoping beat LAST30DAYS_DB_PATH")
 
     def test_dotenv_value_used_when_neither_flag_nor_shell_env_set(self) -> None:
         """LAST30DAYS_DB_PATH in ~/.config/last30days/.env supplies the path."""
