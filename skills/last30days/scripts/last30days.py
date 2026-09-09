@@ -580,7 +580,16 @@ def read_synthesis_file(path: str) -> str:
 
 
 def _scoped_store_db(args: argparse.Namespace) -> Path | None:
-    """Scoped runs write findings inside the save dir, matching scoped reads."""
+    """Scoped runs write findings inside the save dir, matching scoped reads.
+
+    An explicit store path (``--db`` / ``LAST30DAYS_DB_PATH``, pinned into
+    ``store._db_override`` by main()) wins over save-dir scoping: orchestrators
+    export both a memory dir and a dedicated DB, and the DB is the contract.
+    """
+    import store
+
+    if store._db_override is not None:
+        return store._db_override
     save_dir = getattr(args, "save_dir", None)
     if save_dir:
         return Path(save_dir).expanduser().resolve() / "research.db"

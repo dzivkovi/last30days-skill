@@ -241,6 +241,30 @@ class DbFlagEngineTests(unittest.TestCase):
             msg="Env-targeted DB got created when flag was explicit — precedence broken.",
         )
 
+    def test_db_wins_over_save_dir_scoping(self) -> None:
+        """--db beats the save-dir scoped store (upstream scoped_db via --save-dir).
+
+        Orchestrators export both LAST30DAYS_MEMORY_DIR and a dedicated DB; the
+        explicit DB is the contract, so findings must not land in
+        <save_dir>/research.db.
+        """
+        save_dir = self.tmp / "mem"
+        save_dir.mkdir()
+        result = _run_engine(
+            topic="OpenAI",
+            extra_argv=["--db", str(self.flag_db), "--save-dir", str(save_dir)],
+            env_overrides={"LAST30DAYS_CONFIG_DIR": ""},
+        )
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        self.assertGreater(
+            _count_findings(self.flag_db), 0,
+            msg=f"No findings in --db path {self.flag_db}. stderr: {result.stderr}",
+        )
+        self.assertFalse(
+            (save_dir / "research.db").exists(),
+            msg="save-dir scoping overrode the explicit --db path",
+        )
+
     def test_dotenv_value_used_when_neither_flag_nor_shell_env_set(self) -> None:
         """LAST30DAYS_DB_PATH in ~/.config/last30days/.env supplies the path."""
         self._write_dotenv(f"LAST30DAYS_DB_PATH={self.env_db}\n")
