@@ -668,32 +668,32 @@ def _threads_record(config):
 
 
 def _telegram_record(config):
-    # Telegram needs the key AND an INCLUDE_SOURCES=telegram opt-in AND a
-    # channel list (TELEGRAM_SOURCES). Without named channels there is no
-    # discovery endpoint to call.
-    requires = "SCRAPECREATORS_API_KEY + INCLUDE_SOURCES=telegram + TELEGRAM_SOURCES"
-    if not config.get("SCRAPECREATORS_API_KEY"):
-        return _record(status="unconfigured", requires=requires, fix=_sc_fix())
+    # Telegram needs an INCLUDE_SOURCES=telegram opt-in AND a channel list
+    # (TELEGRAM_SOURCES). Without named channels there is no discovery endpoint
+    # to call. The key is optional: without it the keyless t.me/s backend runs.
     from . import telegram
+    requires = "INCLUDE_SOURCES=telegram + TELEGRAM_SOURCES (SCRAPECREATORS_API_KEY optional)"
     channels = telegram._get_channel_sources(config)
+    backend = telegram.resolve_backend(config)
     if "telegram" in env.include_sources(config):
         if channels:
-            return _record(
-                status=health.OK,
-                requires=requires,
-                detail=f"SCRAPECREATORS_API_KEY present, {len(channels)} channel(s) configured",
-            )
+            # Chain prediction (scrapecreators -> keyless), so a pin to an
+            # unusable backend reads as an error here exactly as it fails at run time.
+            record = _chained_record("telegram", config)
+            record["requires"] = requires
+            record["detail"] = f"{len(channels)} channel(s) configured"
+            return record
         return _record(
             status="unconfigured",
             requires=requires,
             fix="set TELEGRAM_SOURCES to a comma-separated list of public channel handles",
-            note="key present and opt-in active, but no channels configured",
+            note=f"opt-in active (backend would be {backend}), but no channels configured",
         )
     return _record(
         status="opt-in",
         requires=requires,
         fix="add telegram to INCLUDE_SOURCES and set TELEGRAM_SOURCES to channel handles",
-        note="key present; opt-in only, channels required",
+        note=f"opt-in only, channels required; backend would be {backend}",
     )
 
 

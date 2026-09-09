@@ -489,6 +489,8 @@ def get_config(policy: ConfigLoadPolicy | None = None) -> dict[str, Any]:
         ('LAST30DAYS_X_MODEL', None),
         ('LAST30DAYS_X_BACKEND', None),
         ('LAST30DAYS_REDDIT_BACKEND', None),
+        # Telegram backend pin: scrapecreators | keyless (t.me/s preview pages).
+        ('LAST30DAYS_TELEGRAM_BACKEND', None),
         # Keyless reddit.com token-bucket rate (req/sec). http.py reads it
         # from os.environ on each acquire, so .env values are exported below.
         ('LAST30DAYS_REDDIT_KEYLESS_RATE', None),
