@@ -33,6 +33,7 @@ from . import (
     entity_extract,
     env,
     github,
+    github_trending,
     grok_x,
     grounding,
     hackernews,
@@ -110,6 +111,9 @@ SEARCH_ALIAS = {
 MAX_SOURCE_FETCHES: dict[str, int] = {
     "x": 2, "jobs": 1, "linkedin": 1, "stocktwits": 1, "trustpilot": 1, "amazon": 1,
     "telegram": 1,
+    # The trending page is global and the search half keys off the whole
+    # topic, so N subqueries would fetch the same rows N times.
+    "github_trending": 1,
 }
 
 _FAILURE_SPECIFICITY = {
@@ -219,6 +223,7 @@ MOCK_AVAILABLE_SOURCES = [
     "corpus",
     "dripstack",
     "telegram",
+    "github_trending",
 ]
 
 
@@ -292,6 +297,12 @@ def available_sources(
         requested_sources and "dripstack" in requested_sources
     ):
         available.append("dripstack")
+    # GitHub trending is opt-in only (DripStack pattern): risers from the
+    # public trending page plus new repos from the keyless search API.
+    if "github_trending" in include_sources or (
+        requested_sources and "github_trending" in requested_sources
+    ):
+        available.append("github_trending")
     if which("digg-pp-cli"):
         available.append("digg")
     # arXiv is default-on when its Printing Press CLI is installed (zero auth).
@@ -4838,6 +4849,19 @@ def _retrieve_stream_impl(
             stocktwits.parse_stocktwits_response(result, query=subquery.search_query),
             _result_outcome_artifact(source, result),
         )
+    if source == "github_trending":
+        relevance_topic = raw_topic or topic or subquery.search_query
+        result = github_trending.search_github_trending(
+            relevance_topic, from_date, to_date, depth=depth,
+            token=github.resolve_token(config.get("GITHUB_TOKEN")),
+            config=config,
+        )
+        artifact = _result_outcome_artifact(source, result)
+        if not artifact and result.get("warning"):
+            # One half failed (trending page or search API); say so instead of
+            # reporting a clean run on half the evidence.
+            artifact = _outcome_artifact(schema.PARTIAL, str(result["warning"]), attempted=True)
+        return github_trending.parse_github_trending_response(result), artifact
     if source == "dripstack":
         result = dripstack.search_dripstack(
             subquery.search_query, from_date, to_date, depth=depth)

@@ -728,6 +728,7 @@ The magic of /last30days is Reddit comments + X posts together - and both are fr
 - `PERPLEXITY_API_KEY=xxx` - preferred Agent/Search API path with citations; set `INCLUDE_SOURCES=perplexity`. Existing `OPENROUTER_API_KEY` installs keep the synchronous Sonar fallback.
 - `XIAOHONGSHU_API_BASE=http://localhost:18060` - Xiaohongshu/RED via a logged-in x-mcp browser plugin or `xiaohongshu-mcp` service; optional unless the local service runs on a custom URL. Opt in per run with `--search xhs`, or persistently via `INCLUDE_SOURCES=xiaohongshu`.
 - DripStack (premium financial newsletter search) is opt-in only: per run with `--search dripstack`, or persistently via `INCLUDE_SOURCES=dripstack`. Free public search API, no key; never active without the opt-in.
+- GitHub trending is opt-in via `--search github,github_trending` (per run) or `INCLUDE_SOURCES=github_trending`. Add it when the user asks what repositories are trending, rising, new, or popular in a domain ("top repos this week for X", "what's new on GitHub for Y"). It returns two labeled halves: repositories rising this week from github.com/trending (filtered to the topic) and repositories created inside the window in the topic; the `container` field says which. It is not a replacement for the always-on `github` source, which covers issues and pull requests.
 - Telegram (public channels) is opt-in via `--telegram-sources=handle1,handle2` (auto-activates for that run) or persistently via `TELEGRAM_SOURCES=handles` + `INCLUDE_SOURCES=telegram`. No key required: without `SCRAPECREATORS_API_KEY` the engine reads the public `t.me/s/<channel>` preview pages (text, views, reactions); with the key ScrapeCreators is used unless `LAST30DAYS_TELEGRAM_BACKEND=keyless`. Named public channels only; no keyword discovery.
 - `BSKY_HANDLE=you.bsky.social` + `BSKY_APP_PASSWORD=xxx` - Bluesky (free app password).
 - `BRAVE_API_KEY=xxx` or `EXA_API_KEY=xxx` - web search backends.
@@ -785,7 +786,7 @@ SKILL_DIR="<absolute path of the directory containing the SKILL.md you just Read
 "${LAST30DAYS_PYTHON}" "${SKILL_DIR}/scripts/last30days.py" --diagnose
 ```
 
-`--diagnose` prints JSON. `ACTIVE_SOURCES_LIST` is its `available_sources` array — the engine's authoritative source set, computed after credential resolution. Map the tokens to display names: `reddit`→Reddit, `hackernews`→Hacker News, `polymarket`→Polymarket, `github`→GitHub, `digg`→Digg, `x`→X, `youtube`→YouTube, `tiktok`→TikTok, `instagram`→Instagram, `threads`→Threads, `pinterest`→Pinterest, `linkedin`→LinkedIn, `bluesky`→Bluesky, `perplexity`→Perplexity, `grounding`→Web, `jobs`→Jobs, `corpus`→Your files, `dripstack`→DripStack.
+`--diagnose` prints JSON. `ACTIVE_SOURCES_LIST` is its `available_sources` array — the engine's authoritative source set, computed after credential resolution. Map the tokens to display names: `reddit`→Reddit, `hackernews`→Hacker News, `polymarket`→Polymarket, `github`→GitHub, `digg`→Digg, `x`→X, `youtube`→YouTube, `tiktok`→TikTok, `instagram`→Instagram, `threads`→Threads, `pinterest`→Pinterest, `linkedin`→LinkedIn, `bluesky`→Bluesky, `perplexity`→Perplexity, `grounding`→Web, `jobs`→Jobs, `corpus`→Your files, `dripstack`→DripStack, `github_trending`→GitHub trending.
 
 - If EXCLUDE_SOURCES is set (comma-separated, case-insensitive): drop any matching source from ACTIVE_SOURCES_LIST before displaying
 
