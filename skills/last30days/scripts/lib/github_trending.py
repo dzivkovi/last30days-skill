@@ -270,10 +270,11 @@ def _item(
             "topics": row.get("topics", []),
             "rank": rank + 1,
             "observed_at": observed_at if half == "risers" else None,
-            # The search half was gated by the topic query already; without
-            # this the lexical prune drops repos whose description does not
-            # repeat the query words (same rule the Amazon lane uses).
-            "grounding_exempt": half == "new",
+            # Both halves were gated by the topic already (the search query,
+            # or the lexical filter over the trending page); without this the
+            # lexical prune and rank would penalize repos whose description
+            # does not repeat the query words (same rule the Amazon lane uses).
+            "grounding_exempt": True,
         },
     }
 
