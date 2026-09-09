@@ -69,12 +69,11 @@ def test_new_repos_query_uses_created_since_and_never_pushed(monkeypatch):
 
     items = gt.fetch_new_repos("AI agent memory is:issue", "2026-08-10", limit=20)
 
-    assert "created%3A%3E2026-08-10" in seen[0] and "pushed" not in seen[0] and "is%3Aissue" not in seen[0]
+    assert "created%3A%3E%3D2026-08-10" in seen[0] and "pushed" not in seen[0] and "is%3Aissue" not in seen[0]
     assert "sort=stars" in seen[0]
-    assert [i["title"] for i in items] == ["newco/agent-memory-server", "example/agent-memory", "solo/weekend-notes"]
+    assert [i["title"] for i in items] == ["newco/agent-memory-server", "example/agent-memory"]  # 3-star repo under the floor
     assert items[0]["date"] == "2026-08-17" and items[0]["engagement"] == {"stars": 485, "forks": 31, "stars_week": 0}
     assert items[0]["metadata"]["grounding_exempt"] is True and items[0]["metadata"]["half"] == "new"
-    assert items[2]["snippet"] == "" and items[2]["metadata"]["language"] == ""
 
 
 def test_new_repos_skipped_for_a_global_question(monkeypatch):
@@ -93,7 +92,7 @@ def test_search_merges_halves_and_marks_repos_seen_in_both(offline):
     assert "error" not in result and "warning" not in result
     assert by_title["example/agent-memory"]["metadata"]["half"] == "both"
     assert by_title["example/agent-memory"]["engagement"]["stars_week"] == 4_210
-    assert by_title["example/agent-memory"]["date"] == "2026-09-09"  # riser first: observation date wins
+    assert by_title["example/agent-memory"]["date"] == "2026-08-20"  # creation date beats the observation stamp
     assert by_title["labs/agentic-marketing-kit"]["date"] == "2026-09-09"
     assert by_title["newco/agent-memory-server"]["metadata"]["half"] == "new"
     assert by_title["labs/agentic-marketing-kit"]["metadata"]["half"] == "risers"

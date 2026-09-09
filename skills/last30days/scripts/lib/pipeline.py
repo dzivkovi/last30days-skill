@@ -4856,10 +4856,12 @@ def _retrieve_stream_impl(
             token=github.resolve_token(config.get("GITHUB_TOKEN")),
             config=config,
         )
-        return (
-            github_trending.parse_github_trending_response(result),
-            _result_outcome_artifact(source, result),
-        )
+        artifact = _result_outcome_artifact(source, result)
+        if not artifact and result.get("warning"):
+            # One half failed (trending page or search API); say so instead of
+            # reporting a clean run on half the evidence.
+            artifact = _outcome_artifact(schema.PARTIAL, str(result["warning"]), attempted=True)
+        return github_trending.parse_github_trending_response(result), artifact
     if source == "dripstack":
         result = dripstack.search_dripstack(
             subquery.search_query, from_date, to_date, depth=depth)

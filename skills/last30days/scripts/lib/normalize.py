@@ -891,8 +891,9 @@ def _normalize_github_trending(
     metadata = dict(item.get("metadata") or {})
     parts = [repo.replace("/", " "), description, str(metadata.get("language") or ""), " ".join(metadata.get("topics") or [])]
     date = item.get("date")
-    # Risers are stamped with the observation date, not a publication date.
-    confidence = "low" if metadata.get("half") == "risers" or not date else "high"
+    # A creation date is a real publication date; the observation stamp a
+    # riser carries ("rising this week", seen on the run's end date) is not.
+    confidence = "high" if date and metadata.get("created_at") else "low"
     return _source_item(
         item_id=str(item.get("id") or f"GT{index + 1}"),
         source=source,

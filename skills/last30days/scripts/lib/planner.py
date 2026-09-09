@@ -154,6 +154,7 @@ SOURCE_CAPABILITIES = {
     "xiaohongshu": {"video", "video_shortform", "social"},
     "telegram": {"discussion", "social"},
     "github": {"discussion", "link"},
+    "github_trending": {"reference", "link"},
     "grounding": {"web", "reference", "link"},
     "perplexity": {"web", "reference", "analysis"},
     "jobs": {"jobs", "company_signal", "link"},

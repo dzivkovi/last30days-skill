@@ -9,17 +9,19 @@ Two clearly separated halves, never blended into one "trending" number:
   to a few percent of baseline, and OSSInsight switched its rankings off).
   The page has no topic filter and about 25 rows, so risers are kept only when
   they lexically match the run topic, unless the topic itself is a global
-  "what is trending" question.
-- **new**: ``GET /search/repositories?q=<terms> created:>{from_date}&sort=stars``,
+  "what is trending" question. A riser has no publication date; it is stamped
+  with the run's end date as an observation date at low confidence.
+- **new**: ``GET /search/repositories?q=<terms> created:>={from_date}&sort=stars``,
   keyless (10 requests per minute; a GITHUB_TOKEN raises that). It finds
   brand-new repositories in the topic ranked by lifetime stars; it cannot see an
   established repository having a breakout week, which is the risers' job.
   ``pushed:>`` is deliberately not used: it returns all-time giants that merely
-  received a commit.
+  received a commit. Repositories under a small star floor are dropped so a
+  person or brand topic does not pull in name-collision junk.
 
 Opt-in only: ``--search github_trending`` or ``INCLUDE_SOURCES=github_trending``.
-The two halves share the item shape ``lib.github`` already normalizes; the
-half is carried in ``container`` and ``metadata["half"]``.
+The two halves share one item shape; the half is carried in ``container`` and
+``metadata["half"]`` (``risers``, ``new``, or ``both``).
 """
 
 from __future__ import annotations
@@ -35,19 +37,44 @@ from .relevance import token_overlap_relevance
 TRENDING_URL = "https://github.com/trending"
 SEARCH_REPOS_URL = "https://api.github.com/search/repositories"
 SOURCE = "github_trending"
-# (risers kept, new repos requested) per depth.
-# The engine renders a bounded number of items per source, so the search half
-# is capped low enough that risers (fewer, filtered by topic) stay visible.
-DEPTH_CONFIG: dict[str, tuple[int, int]] = {"quick": (8, 6), "default": (12, 10), "deep": (25, 16)}
+# (risers kept, new repos requested) per depth. The two halves together must fit
+# the engine's per-stream limit (6 / 12 / 20) or the later-sorted half is cut.
+DEPTH_CONFIG: dict[str, tuple[int, int]] = {"quick": (3, 3), "default": (6, 6), "deep": (10, 10)}
 RISER_RELEVANCE_FLOOR = 0.15
-# Topics that mean "what is hot on GitHub" rather than a domain: risers are
-# kept unfiltered for these.
-GLOBAL_TRENDING_TERMS = frozenset({"trending", "trend", "trends", "popular", "hot", "top", "github", "repos", "repositories", "week", "this"})
+MIN_NEW_REPO_STARS = 5
+PERIOD_LABEL = {"daily": "today", "weekly": "this week", "monthly": "this month"}
+# Words that carry no topic: the question shape ("what is trending on GitHub
+# this week") and generic trend vocabulary. A query with nothing else left is a
+# global "what is hot" question: risers are kept unfiltered and the search half
+# is skipped.
+STOPWORDS = frozenset(
+    {
+        "trending", "trend", "trends", "popular", "hot", "top", "github", "repo", "repos", "repositories",
+        "repository", "week", "this", "what", "whats", "is", "are", "on", "for", "the", "of", "in", "a", "an",
+        "to", "and", "s", "new", "rising", "latest", "which",
+    }
+)
 _COUNT = re.compile(r"[\d,]+")
+_REPO_PATH = re.compile(r"[\w.-]+/[\w.-]+")
+# A word is any run of letters or digits in any script, optionally joined by
+# the characters that appear inside tool names (c++, node.js, c#, scikit-learn).
+_WORD = re.compile(r"[^\W_](?:[^\W_]|[.+#-])*", re.UNICODE)
 
 
 def _log(msg: str) -> None:
     log.source_log("GitHub trending", msg, tty_only=False)
+
+
+def topic_words(query: str) -> list[str]:
+    """Unicode-aware topic words with the question shape and trend vocabulary removed."""
+    cleaned = github.strip_search_qualifiers(query or "")
+    words = (m.group(0).lower().rstrip(".") for m in _WORD.finditer(cleaned))
+    return [w for w in words if w and w not in STOPWORDS]
+
+
+def is_global_trending_query(query: str) -> bool:
+    """True when nothing topic-shaped is left ("what's trending on GitHub this week")."""
+    return not topic_words(query)
 
 
 # ---------------------------------------------------------------------------
@@ -112,7 +139,8 @@ class _TrendingParser(HTMLParser):
                     self._repo[name] = text
                 else:
                     m = _COUNT.search(text)
-                    self._repo[name] = int(m.group(0).replace(",", "")) if m else 0
+                    digits = m.group(0).replace(",", "") if m else ""
+                    self._repo[name] = int(digits) if digits.isdigit() else 0
         if tag == "h2":
             self._in_h2 = False
         if self._repo is not None and tag == "article" and self._depth == self._article_depth:
@@ -129,7 +157,9 @@ class _TrendingParser(HTMLParser):
         self._buf = []
 
     def _flush(self) -> None:
-        if self._repo is not None and self._repo["repo"]:
+        # Only an "owner/name" path is a repository; anything else in the h2
+        # link (an absolute URL, a sponsor link) is markup drift, not a repo.
+        if self._repo is not None and _REPO_PATH.fullmatch(self._repo["repo"] or ""):
             self.repos.append(self._repo)
         self._repo = None
 
@@ -140,11 +170,6 @@ def parse_trending_page(page: str) -> list[dict[str, Any]]:
     parser.feed(page or "")
     parser.close()
     return parser.repos
-
-
-def is_global_trending_query(query: str) -> bool:
-    words = [w for w in re.findall(r"[a-z0-9]+", (query or "").lower()) if len(w) > 1]
-    return not words or all(w in GLOBAL_TRENDING_TERMS for w in words)
 
 
 def fetch_risers(
@@ -175,6 +200,12 @@ def fetch_risers(
         if errors is not None:
             errors.append("trending page markup not recognized")
         return []
+    if not any(row["stars_week"] for row in rows):
+        # Rows parsed but the weekly delta did not: the one number this half
+        # exists for. Refuse rather than rank risers by lifetime stars.
+        if errors is not None:
+            errors.append("trending page markup drifted: weekly star delta missing")
+        return []
     keep_all = is_global_trending_query(query)
     items: list[dict[str, Any]] = []
     for rank, row in enumerate(rows):
@@ -195,18 +226,26 @@ def fetch_risers(
 
 
 def _topic_terms(query: str) -> str:
-    cleaned = github.strip_search_qualifiers(query or "")
-    words = [w for w in re.findall(r"[A-Za-z0-9][A-Za-z0-9.+#-]*", cleaned) if w.lower() not in GLOBAL_TRENDING_TERMS]
-    return " ".join(words[:6])
+    return " ".join(topic_words(query)[:6])
 
 
-def fetch_new_repos(query: str, from_date: str, *, limit: int, token: str | None = None, errors: list[str] | None = None) -> list[dict[str, Any]]:
-    """Repositories created since ``from_date`` matching the topic, by lifetime stars."""
+def fetch_new_repos(
+    query: str,
+    from_date: str,
+    *,
+    limit: int,
+    token: str | None = None,
+    errors: list[str] | None = None,
+) -> list[dict[str, Any]]:
+    """Repositories created on or after ``from_date`` matching the topic, by lifetime
+    stars, above a small star floor."""
     terms = _topic_terms(query)
     if not terms:
         return []
-    q = f"{terms} created:>{from_date}"
-    url = f"{SEARCH_REPOS_URL}?" + urllib.parse.urlencode({"q": q, "sort": "stars", "order": "desc", "per_page": str(min(limit, 50))})
+    q = f"{terms} created:>={from_date}"
+    url = f"{SEARCH_REPOS_URL}?" + urllib.parse.urlencode(
+        {"q": q, "sort": "stars", "order": "desc", "per_page": str(min(limit * 2, 50))}
+    )
     data = github._fetch_json(url, token, failure_out=errors)
     if not data:
         return []
@@ -223,10 +262,12 @@ def fetch_new_repos(query: str, from_date: str, *, limit: int, token: str | None
             "created_at": str(repo.get("created_at") or ""),
             "url": str(repo.get("html_url") or ""),
         }
-        if not row["repo"]:
+        if not _REPO_PATH.fullmatch(row["repo"]) or row["stars"] < MIN_NEW_REPO_STARS:
             continue
         text = f"{row['repo'].replace('/', ' ')} {row['description']} {' '.join(row['topics'])}"
-        items.append(_item(row, half="new", rank=rank, relevance=max(0.5, token_overlap_relevance(query, text))))
+        items.append(_item(row, half="new", rank=rank, relevance=token_overlap_relevance(query, text)))
+        if len(items) >= limit:
+            break
     _log(f"new: {len(items)} repositories created since {from_date} for '{terms}'")
     return items
 
@@ -247,12 +288,14 @@ def _item(
 ) -> dict[str, Any]:
     repo = row["repo"]
     owner = repo.split("/", 1)[0] if "/" in repo else ""
+    period = PERIOD_LABEL.get(since, "this week")
+    created = (row.get("created_at") or "")[:10]
     if half == "risers":
-        container = f"GitHub trending: rising this {since.removesuffix('ly') if since != 'daily' else 'day'}"
-        why = f"{row['stars_week']:,} stars this {since.removesuffix('ly')}, rank {rank + 1} on github.com/trending"
+        container = f"GitHub trending: rising {period}"
+        why = f"{row['stars_week']:,} stars {period}, rank {rank + 1} on github.com/trending"
     else:
         container = "GitHub: new repositories in topic"
-        why = f"created {row.get('created_at', '')[:10]}, {row['stars']:,} stars"
+        why = f"created {created}, {row['stars']:,} stars"
     return {
         "id": f"GT-{half}-{repo}",
         "title": repo,
@@ -260,7 +303,7 @@ def _item(
         "snippet": row["description"],
         "author": owner,
         "container": container,
-        "date": (row.get("created_at") or "")[:10] or (observed_at if half == "risers" else None),
+        "date": created or (observed_at if half == "risers" else None),
         "engagement": {"stars": row["stars"], "forks": row["forks"], "stars_week": row["stars_week"]},
         "relevance": round(min(1.0, relevance), 2),
         "why_relevant": why,
@@ -269,9 +312,10 @@ def _item(
             "language": row["language"],
             "topics": row.get("topics", []),
             "rank": rank + 1,
+            "created_at": created or None,
             "observed_at": observed_at if half == "risers" else None,
-            # Both halves were gated by the topic already (the search query,
-            # or the lexical filter over the trending page); without this the
+            # Both halves were gated by the topic already (the search query, or
+            # the lexical filter over the trending page); without this the
             # lexical prune and rank would penalize repos whose description
             # does not repeat the query words (same rule the Amazon lane uses).
             "grounding_exempt": True,
@@ -288,7 +332,8 @@ def search_github_trending(
     config: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Both halves, deduplicated by repository. Returns ``{"items": [...]}`` plus an
-    ``error`` key only when both halves failed to produce anything."""
+    ``error`` key when both halves failed to produce anything and a ``warning``
+    key when one half failed."""
     risers_cap, new_cap = DEPTH_CONFIG.get(depth, DEPTH_CONFIG["default"])
     errors: list[str] = []
     risers = fetch_risers(query, limit=risers_cap, observed_at=to_date, errors=errors)
@@ -296,13 +341,19 @@ def search_github_trending(
     seen: dict[str, dict[str, Any]] = {}
     for item in risers + new:
         key = item["title"].lower()
-        if key in seen:
-            first = seen[key]
-            first["metadata"]["half"] = "both"
-            first["engagement"]["stars_week"] = first["engagement"]["stars_week"] or item["engagement"]["stars_week"]
-            first["date"] = first["date"] or item["date"]
+        if key not in seen:
+            seen[key] = item
             continue
-        seen[key] = item
+        first = seen[key]
+        first["metadata"]["half"] = "both"
+        first["engagement"]["stars_week"] = first["engagement"]["stars_week"] or item["engagement"]["stars_week"]
+        first["why_relevant"] = f"{first['why_relevant']}; {item['why_relevant']}"
+        # A real creation date always beats the observation stamp.
+        created = item["metadata"].get("created_at") or first["metadata"].get("created_at")
+        if created:
+            first["date"] = created
+            first["metadata"]["created_at"] = created
+        first["metadata"]["observed_at"] = first["metadata"].get("observed_at") or item["metadata"].get("observed_at")
     items = list(seen.values())
     result: dict[str, Any] = {"items": items}
     if errors and not items:
