@@ -59,6 +59,244 @@ def test_scans_matching_text_and_markdown_with_path_titles(tmp_path):
     assert str(note) not in result.items[0].url
 
 
+def _write_frontmatter_note(path: Path, fields: str, body: str, *, mtime: str) -> None:
+    path.write_text(f"---\n{fields}\n---\n{body}\n", encoding="utf-8")
+    _set_mtime(path, mtime)
+
+
+def test_frontmatter_overrides_mtime_url_author_title_and_engagement(tmp_path):
+    note = tmp_path / "rss-item.md"
+    _write_frontmatter_note(
+        note,
+        "schema_version: 1\n"
+        "title: Vendors race to ship MCP servers\n"
+        "url: https://example.com/mcp-servers?utm_source=feed\n"
+        "author: Jane Writer\n"
+        "container: Travel Trends\n"
+        "published_at: 2026-06-20T09:30:00Z\n"
+        "engagement: {comments: 3, views: 120, active: true}\n"
+        "tags: [MCP servers, agents]\n"
+        "classification: public",
+        "Body text about tool protocols.",
+        mtime="2025-01-01T00:00:00",  # far outside the window: frontmatter must win
+    )
+    result = _scan(tmp_path)
+    assert [item.title for item in result.items] == ["Vendors race to ship MCP servers"]
+    item = result.items[0]
+    assert item.published_at == "2026-06-20"
+    # The item keeps its opaque key so private text can never fuse with a
+    # public copy of the same article; the link is metadata for the private block.
+    assert item.url.startswith("corpus://")
+    assert item.metadata["canonical_url"] == "https://example.com/mcp-servers?utm_source=feed"
+    assert item.author == "Jane Writer"
+    assert item.container == "Travel Trends"
+    assert item.engagement == {"comments": 3, "views": 120}
+    assert item.body.strip() == "Body text about tool protocols."
+    assert item.metadata["frontmatter"] == {"schema_version": 1, "classification": "public"}
+    assert item.metadata["local_only"] is True
+    assert result.notes == []
+
+
+def test_frontmatter_item_never_shares_a_fusion_key_with_the_web_copy(tmp_path):
+    from lib import fusion
+
+    note = tmp_path / "bridged.md"
+    _write_frontmatter_note(
+        note,
+        "url: https://www.example.com/story/?utm_campaign=x",
+        "MCP servers story as syndicated by a feed.",
+        mtime="2026-07-01T00:00:00",
+    )
+    bridged = _scan(tmp_path).items[0]
+    web = schema.SourceItem(
+        item_id="G1", source="grounding", title="Story", body="MCP servers story",
+        url="https://example.com/story", published_at="2026-07-01",
+    )
+    assert fusion.candidate_key(bridged) != fusion.candidate_key(web)
+    assert fusion.candidate_key(bridged).startswith("corpus://")
+
+
+def test_syndicated_copies_with_one_canonical_url_keep_only_the_best_file(tmp_path):
+    for index, body in enumerate(["MCP servers MCP servers everywhere", "MCP servers once"]):
+        _write_frontmatter_note(
+            tmp_path / f"copy-{index}.md",
+            "url: https://example.com/same-story",
+            body,
+            mtime="2026-07-01T00:00:00",
+        )
+    _write_frontmatter_note(
+        tmp_path / "other.md", "url: https://example.com/other", "MCP servers other story",
+        mtime="2026-07-01T00:00:00",
+    )
+    titles = sorted(item.title for item in _scan(tmp_path).items)
+    assert titles == ["copy 0", "other"]
+
+
+def test_frontmatter_rendered_link_and_secret_keys_dropped(tmp_path):
+    _write_frontmatter_note(
+        tmp_path / "leaky.md",
+        "url: https://example.com/a\napi_token: abc123\nclient_id: acme\npublished_at: 2026-07-01",
+        "MCP servers with a leaky bridge.",
+        mtime="2026-07-01T00:00:00",
+    )
+    item = _scan(tmp_path).items[0]
+    assert item.metadata["frontmatter"] == {"client_id": "acme"}
+    assert "abc123" not in json.dumps(item.metadata)
+    report = _privacy_report()
+    report.items_by_source["corpus"][0].metadata["canonical_url"] = "https://example.com/a"
+    rendered = "\n".join(render._render_corpus_section(report))
+    assert "  - Link: https://example.com/a" in rendered
+
+
+def test_bom_prefixed_frontmatter_is_parsed(tmp_path):
+    note = tmp_path / "bom.md"
+    note.write_text("﻿---\npublished_at: 2026-06-20\n---\nMCP servers via PowerShell.\n", encoding="utf-8")
+    _set_mtime(note, "2025-01-01T00:00:00")
+    assert [item.published_at for item in _scan(tmp_path).items] == ["2026-06-20"]
+
+
+def test_horizontal_rule_note_keeps_its_whole_body(tmp_path):
+    note = tmp_path / "rule.md"
+    note.write_text("---\nMCP servers meeting notes\n---\nClosing remark.", encoding="utf-8")
+    _set_mtime(note, "2026-07-01T00:00:00")
+    item = _scan(tmp_path).items[0]
+    assert item.body.startswith("---\nMCP servers meeting notes")
+    assert "frontmatter" not in item.metadata
+
+
+def test_unclosed_frontmatter_block_is_plain_text(tmp_path):
+    note = tmp_path / "unclosed.md"
+    note.write_text("---\npublished_at: 2026-06-20\nMCP servers, no closing marker.", encoding="utf-8")
+    _set_mtime(note, "2026-07-01T00:00:00")
+    item = _scan(tmp_path).items[0]
+    assert item.published_at == "2026-07-01"
+    assert item.body.startswith("---")
+
+
+def test_frontmatter_engagement_rejects_non_finite_negative_and_huge_values(tmp_path):
+    _write_frontmatter_note(
+        tmp_path / "eng.md",
+        "engagement: {views: 1e999, likes: -3, shares: 10000000000000000000, comments: 2.5, ok: 7}",
+        "MCP servers engagement edge cases.",
+        mtime="2026-07-01T00:00:00",
+    )
+    item = _scan(tmp_path).items[0]
+    assert item.engagement == {"comments": 2.5, "ok": 7}
+
+
+def test_nested_containers_stay_strings_and_scalars_parse(tmp_path):
+    _write_frontmatter_note(
+        tmp_path / "scalars.md",
+        "title: 'Quoted: MCP servers'\nauthor: \"A, B\"\nengagement: {score: 1.5, none: null}\n"
+        "tags: [[deep], plain]\ncontainer: ~",
+        "Body.",
+        mtime="2026-07-01T00:00:00",
+    )
+    item = _scan(tmp_path).items[0]
+    assert item.title == "Quoted: MCP servers"
+    assert item.author == "A, B"
+    assert item.engagement == {"score": 1.5}
+    assert item.container == str(tmp_path)  # null container falls back to the directory
+    # Deep nesting never recurses: one list level, the rest stays a string.
+    assert corpus._parse_scalar("[" * 5000 + "a" + "]" * 5000) == ["[" * 4999 + "a" + "]" * 4999]
+
+
+def test_out_of_window_pdf_and_plain_text_are_not_extracted(tmp_path, monkeypatch):
+    pdf = tmp_path / "old.pdf"
+    pdf.write_bytes(b"%PDF-1.4 fake")
+    _set_mtime(pdf, "2025-01-01T00:00:00")
+    plain = tmp_path / "old.txt"
+    plain.write_text("MCP servers, but from last year.", encoding="utf-8")
+    _set_mtime(plain, "2025-01-01T00:00:00")
+    fresh = tmp_path / "fresh.md"
+    fresh.write_text("MCP servers now.", encoding="utf-8")
+    _set_mtime(fresh, "2026-07-01T00:00:00")
+    monkeypatch.setattr(corpus, "which", lambda name: "/usr/bin/pdftotext")
+
+    def _no_extract(*args, **kwargs):  # pragma: no cover - fails loudly if reached
+        raise AssertionError("out-of-window files must not be extracted")
+
+    monkeypatch.setattr(corpus.subprocess, "run", _no_extract)
+    result = _scan(tmp_path)
+    assert [item.title for item in result.items] == ["fresh"]
+    assert result.files_scanned == 3
+
+
+def test_frontmatter_datetime_with_offset_uses_the_utc_calendar_day(tmp_path):
+    _write_frontmatter_note(
+        tmp_path / "tz.md", "published_at: 2026-07-10T23:30:00-05:00",
+        "MCP servers late at night.", mtime="2026-07-01T00:00:00",
+    )
+    # 2026-07-11 in UTC: outside the window that ends 2026-07-10.
+    assert _scan(tmp_path).items == []
+
+
+def test_frontmatter_date_outside_window_excludes_a_freshly_written_file(tmp_path):
+    note = tmp_path / "old-item.md"
+    _write_frontmatter_note(
+        note,
+        "published_at: 2024-03-01",
+        "MCP servers were discussed long ago.",
+        mtime="2026-07-01T00:00:00",
+    )
+    assert _scan(tmp_path).items == []
+    assert [item.published_at for item in _scan(tmp_path, all_time=True).items] == ["2024-03-01"]
+
+
+def test_frontmatter_bad_date_falls_back_to_mtime_with_a_note(tmp_path):
+    note = tmp_path / "bad-date.md"
+    _write_frontmatter_note(
+        note,
+        "published_at: last Tuesday",
+        "MCP servers keep shipping.",
+        mtime="2026-07-01T00:00:00",
+    )
+    result = _scan(tmp_path)
+    assert [item.published_at for item in result.items] == ["2026-07-01"]
+    assert len(result.notes) == 1
+    assert result.notes[0].startswith("Ignored unparseable frontmatter published_at in ")
+    assert result.notes[0].endswith("bad-date.md")
+    assert str(note) not in result.notes[0]  # note-safe path, never the absolute path
+
+
+def test_frontmatter_non_http_url_keeps_the_opaque_corpus_key(tmp_path):
+    note = tmp_path / "local-link.md"
+    _write_frontmatter_note(
+        note,
+        "url: file:///home/private/notes/mcp.md",
+        "MCP servers, private notes.",
+        mtime="2026-07-01T00:00:00",
+    )
+    item = _scan(tmp_path).items[0]
+    assert item.url.startswith("corpus://")
+    assert "private" not in item.url
+    assert "canonical_url" not in item.metadata
+
+
+def test_frontmatter_tags_count_toward_relevance(tmp_path):
+    note = tmp_path / "tagged.md"
+    _write_frontmatter_note(
+        note,
+        "tags: [MCP servers]",
+        "Nothing in the body mentions the topic wording at all.",
+        mtime="2026-07-01T00:00:00",
+    )
+    assert [item.title for item in _scan(tmp_path).items] == ["tagged"]
+
+
+def test_plain_note_without_frontmatter_is_unchanged(tmp_path):
+    note = tmp_path / "plain.md"
+    note.write_text("--- not a frontmatter block ---\nMCP servers plain note.", encoding="utf-8")
+    _set_mtime(note, "2026-07-01T00:00:00")
+    item = _scan(tmp_path).items[0]
+    assert item.title == "plain"
+    assert item.url.startswith("corpus://")
+    assert item.body.startswith("--- not a frontmatter block ---")
+    assert item.engagement == {}
+    assert "frontmatter" not in item.metadata
+    assert "canonical_url" not in item.metadata
+
+
 def test_multilingual_matching_reuses_shared_cjk_tokenizer(tmp_path):
     note = tmp_path / "模型记录.md"
     note.write_text("国产大模型的最新测评和部署记录", encoding="utf-8")

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import subprocess
 import threading
@@ -135,10 +136,18 @@ def search(
             except OSError as exc:
                 notes.append(f"Skipped {_display_path(path, root)}: {_safe_error(exc)}")
                 continue
-            published_at = datetime.fromtimestamp(
+            mtime_date = datetime.fromtimestamp(
                 stat.st_mtime, tz=timezone.utc
             ).date().isoformat()
-            if not all_time and not (from_date <= published_at <= to_date):
+            mtime_in_window = all_time or (from_date <= mtime_date <= to_date)
+            # The recency window is judged after the text is read, because a
+            # frontmatter ``published_at`` (bridged feed items, exported
+            # threads) overrides the file mtime. Files outside the mtime
+            # window are opened only when they can carry frontmatter: PDFs
+            # never can (pdftotext output), and a text file must start with
+            # the ``---`` marker, which a 4-byte peek settles without
+            # extracting or caching the whole file.
+            if not mtime_in_window and not _may_carry_frontmatter(path):
                 continue
 
             cached = cache_entries.get(str(path))
@@ -167,33 +176,65 @@ def search(
                     "text": text[:MAX_CACHE_TEXT_CHARS],
                 })
 
-            title = _path_title(path)
-            score = _match_score(topic, f"{title}\n{text}")
+            fields, body = _parse_frontmatter(text)
+            published_at = mtime_date
+            raw_date = fields.get("published_at")
+            if raw_date is not None:
+                parsed_date = _frontmatter_date(raw_date)
+                if parsed_date:
+                    published_at = parsed_date
+                else:
+                    notes.append(
+                        f"Ignored unparseable frontmatter published_at in "
+                        f"{_display_path(path, root)}"
+                    )
+            if not all_time and not (from_date <= published_at <= to_date):
+                continue
+
+            title = _frontmatter_str(fields.get("title")) or _path_title(path)
+            tags_text = _frontmatter_tags(fields.get("tags"))
+            score = _match_score(topic, f"{title}\n{body}\n{tags_text}")
             if score < 0.15:
                 continue
             relative_path = str(path.relative_to(root))
             path_digest = hashlib.sha256(str(path).encode("utf-8")).hexdigest()
+            corpus_url = f"corpus://{path_digest}"
+            metadata: dict[str, Any] = {
+                "path": str(path),
+                "relative_path": relative_path,
+                "extension": path.suffix.lower(),
+                "local_only": True,
+            }
+            # The item keeps its opaque corpus:// key on purpose. A public
+            # URL on the item would let fusion merge it with the same article
+            # fetched from the web, and the merged candidate can carry this
+            # private body into exports and publishing. The canonical URL is
+            # kept as metadata for the private "From your files" block only.
+            canonical_url = _frontmatter_url(fields.get("url"))
+            if canonical_url:
+                metadata["canonical_url"] = canonical_url
+            if fields:
+                extra = _frontmatter_extra(fields)
+                if extra:
+                    metadata["frontmatter"] = extra
             item = schema.SourceItem(
                 item_id=f"C{path_digest[:12]}",
                 source=SOURCE,
                 title=title,
-                body=text,
-                url=f"corpus://{path_digest}",
-                container=str(path.parent),
+                body=body,
+                url=corpus_url,
+                author=_frontmatter_str(fields.get("author")),
+                container=_frontmatter_str(fields.get("container")) or str(path.parent),
                 published_at=published_at,
                 date_confidence="high",
+                engagement=_frontmatter_engagement(fields.get("engagement")),
                 relevance_hint=score,
                 why_relevant=f"Matched local file {relative_path}",
                 # Leave empty so extract_best_snippet derives the matching
                 # window; a file-prefix snippet is preserved verbatim and can
                 # show unrelated intro text (and draw entity-miss demotion).
                 snippet="",
-                metadata={
-                    "path": str(path),
-                    "relative_path": relative_path,
-                    "extension": path.suffix.lower(),
-                    "local_only": True,
-                },
+                metadata=metadata,
             )
             candidates.append((score, stat.st_mtime_ns, item))
     if scan_limit_reached:
@@ -205,7 +246,19 @@ def search(
         _write_cache(cache_path, cache, notes)
 
     candidates.sort(key=lambda row: (-row[0], -row[1], row[2].title.casefold()))
-    items = [item for _score, _mtime, item in candidates[: max(0, limit)]]
+    # Syndicated copies of one article (same canonical URL from several
+    # feeds) keep only their best-scoring file, so duplicates cannot fill the
+    # stream's result budget.
+    seen_canonical: set[str] = set()
+    deduped: list[schema.SourceItem] = []
+    for _score, _mtime, item in candidates:
+        canonical = item.metadata.get("canonical_url")
+        if canonical:
+            if canonical in seen_canonical:
+                continue
+            seen_canonical.add(canonical)
+        deduped.append(item)
+    items = deduped[: max(0, limit)]
     log.source_log(
         "Corpus",
         f"scanned {files_scanned} file(s), {cache_hits} cache hit(s), {len(items)} match(es)",
@@ -303,6 +356,164 @@ def _extract_text(path: Path, *, pdftotext: str | None) -> str:
 def _path_title(path: Path) -> str:
     title = path.stem.replace("_", " ").replace("-", " ")
     return " ".join(title.split()) or path.name
+
+
+# Frontmatter keys the adapter maps onto SourceItem fields. Anything else a
+# bridge writes (schema_version, item_id, client_id, source_kind, channel,
+# thread_id, classification, text_kind, retrieved_at, ...) is preserved under
+# metadata["frontmatter"] and never interpreted here.
+FRONTMATTER_KEYS = frozenset(
+    {"title", "url", "author", "container", "published_at", "engagement", "tags"}
+)
+_FRONTMATTER_MAX_LINES = 200
+
+
+_BOM = "﻿"
+_FRONTMATTER_MARKER = "---"
+# Bridges sometimes copy secrets they should have redacted; keys that look
+# like credentials never reach metadata (and thus never the raw report).
+_SENSITIVE_KEY_PARTS = ("token", "secret", "password", "cookie", "apikey", "api_key", "auth")
+_MAX_ENGAGEMENT = 1e15
+
+
+def _may_carry_frontmatter(path: Path) -> bool:
+    """Cheap pre-check for files outside the mtime window: only a text file
+    that starts with the ``---`` marker (BOM allowed) can carry a frontmatter
+    date that pulls it back into the window."""
+    if path.suffix.lower() == ".pdf":
+        return False
+    try:
+        with path.open("rb") as handle:
+            head = handle.read(6)
+    except OSError:
+        return False
+    if head.startswith(b"\xef\xbb\xbf"):
+        head = head[3:]
+    return head.startswith(b"---")
+
+
+def _parse_frontmatter(text: str) -> tuple[dict[str, Any], str]:
+    """Split a leading ``---`` block into ``(fields, body)``.
+
+    Stdlib only, deliberately narrow: flat ``key: value`` lines, one level of
+    ``{a: 1, b: 2}`` maps, ``[a, b]`` lists, quoted strings, ints, floats. The
+    block counts as frontmatter only when it yields at least one recognized
+    key; a note that merely opens with a ``---`` horizontal rule, or has no
+    closing marker within the first lines, returns ``({}, text)`` unchanged,
+    so the lane behaves exactly as before for ordinary notes.
+    """
+    stripped = text[len(_BOM):] if text.startswith(_BOM) else text
+    if not stripped.startswith(_FRONTMATTER_MARKER):
+        return {}, text
+    lines = stripped.splitlines()
+    if lines[0].strip() != _FRONTMATTER_MARKER:
+        return {}, text
+    end = None
+    for index in range(1, min(len(lines), _FRONTMATTER_MAX_LINES)):
+        if lines[index].strip() == _FRONTMATTER_MARKER:
+            end = index
+            break
+    if end is None:
+        return {}, text
+    fields: dict[str, Any] = {}
+    for raw in lines[1:end]:
+        if raw.startswith((" ", "\t", "#")) or ":" not in raw:
+            continue
+        key, _, value = raw.partition(":")
+        key = key.strip().lower()
+        if key:
+            fields[key] = _parse_scalar(value.strip())
+    if not (fields.keys() & FRONTMATTER_KEYS):
+        return {}, text
+    return fields, "\n".join(lines[end + 1 :])
+
+
+def _parse_scalar(value: str, *, nested: bool = False) -> Any:
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in "'\"":
+        return value[1:-1]
+    if not nested and value.startswith("{") and value.endswith("}"):
+        mapping: dict[str, Any] = {}
+        for part in value[1:-1].split(","):
+            if ":" in part:
+                key, _, inner = part.partition(":")
+                mapping[key.strip().strip("'\"")] = _parse_scalar(inner.strip(), nested=True)
+        return mapping
+    if not nested and value.startswith("[") and value.endswith("]"):
+        return [
+            _parse_scalar(part.strip(), nested=True)
+            for part in value[1:-1].split(",")
+            if part.strip()
+        ]
+    if value.lower() in {"", "null", "~"}:
+        return None
+    for cast in (int, float):
+        try:
+            return cast(value)
+        except ValueError:
+            continue
+    return value
+
+
+def _frontmatter_extra(fields: dict[str, Any]) -> dict[str, Any]:
+    """Unrecognized keys preserved for bridges, minus anything credential-shaped."""
+    return {
+        key: value
+        for key, value in fields.items()
+        if key not in FRONTMATTER_KEYS
+        and not any(part in key for part in _SENSITIVE_KEY_PARTS)
+    }
+
+
+def _frontmatter_str(value: Any) -> str | None:
+    text = str(value).strip() if value is not None else ""
+    return text or None
+
+
+def _frontmatter_date(value: Any) -> str | None:
+    """ISO date or datetime (``Z`` accepted) to ``YYYY-MM-DD``; else None."""
+    text = str(value).strip()
+    if not text:
+        return None
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is not None:
+        # Same calendar as the mtime path, which is always judged in UTC.
+        parsed = parsed.astimezone(timezone.utc)
+    return parsed.date().isoformat()
+
+
+def _frontmatter_url(value: Any) -> str | None:
+    """Only http(s) URLs may replace the opaque ``corpus://`` key: a real URL is
+    what lets fusion merge a bridged item with the same article seen on the
+    web, and anything else (file paths, private schemes) must stay opaque."""
+    text = _frontmatter_str(value)
+    if text and text.lower().startswith(("http://", "https://")):
+        return text
+    return None
+
+
+def _frontmatter_engagement(value: Any) -> dict[str, float | int]:
+    if not isinstance(value, dict):
+        return {}
+    counts: dict[str, float | int] = {}
+    for key, raw in value.items():
+        if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+            continue
+        # Non-finite or absurd magnitudes would abort the run inside
+        # signals.normalize (int(NaN)) or float() overflow; drop them.
+        if isinstance(raw, float) and not math.isfinite(raw):
+            continue
+        if 0 <= raw <= _MAX_ENGAGEMENT:
+            counts[str(key)] = raw
+    return counts
+
+
+def _frontmatter_tags(value: Any) -> str:
+    if isinstance(value, list):
+        return " ".join(str(tag) for tag in value if tag is not None)
+    return _frontmatter_str(value) or ""
 
 
 def _match_score(topic: str, text: str) -> float:
