@@ -442,6 +442,16 @@ _WEB_PROBES: Dict[str, Callable[[Dict[str, Any]], BackendFinding]] = {
 }
 _WEB_KEYED = {"brave", "exa", "serper", "parallel"}
 
+def _probe_telegram_keyless(config: Dict[str, Any]) -> BackendFinding:
+    """The public t.me/s preview pages need nothing; always usable."""
+    return BackendFinding(
+        name="keyless",
+        status=health.OK,
+        detail="public t.me/s preview pages, no key",
+        requires="no key; public t.me/s preview pages",
+    )
+
+
 _SC_SPEC = BackendSpec(
     name="scrapecreators",
     requires="SCRAPECREATORS_API_KEY",
@@ -509,6 +519,19 @@ DESCRIPTORS: Dict[str, ChainDescriptor] = {
         ),
         pin_var=None,  # pinned per-run via --web-backend, not an env var
         pin_flag="--web-backend",
+    ),
+    "telegram": ChainDescriptor(
+        source="telegram",
+        mode=MODE_ALTERNATIVE,
+        backends=(
+            _SC_SPEC,
+            BackendSpec(
+                name="keyless",
+                requires="no key; public t.me/s preview pages",
+                probe=_probe_telegram_keyless,
+            ),
+        ),
+        pin_var="LAST30DAYS_TELEGRAM_BACKEND",
     ),
     "reddit": ChainDescriptor(
         source="reddit",

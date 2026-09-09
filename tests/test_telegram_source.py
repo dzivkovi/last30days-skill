@@ -108,9 +108,10 @@ def test_is_telegram_configured_true():
     assert telegram.is_telegram_configured(config) is True
 
 
-def test_is_telegram_configured_false_no_key():
+def test_is_telegram_configured_true_without_key_via_keyless_backend():
     config = {"TELEGRAM_SOURCES": "aipost"}
-    assert telegram.is_telegram_configured(config) is False
+    assert telegram.is_telegram_configured(config) is True
+    assert telegram.resolve_backend(config) == telegram.BACKEND_KEYLESS
 
 
 def test_is_telegram_configured_false_no_channels():
@@ -132,7 +133,10 @@ def test_search_returns_error_without_channels():
     assert "channel list required" in result.get("error", "").lower()
 
 
-def test_search_returns_error_without_token():
+def test_search_without_token_uses_keyless_backend(monkeypatch):
+    """No key is no longer an error: the public t.me/s pages serve the channel."""
+    monkeypatch.setattr(telegram.http, "get_text", lambda url, **kwargs: "<html><body>landing</body></html>")
+
     result = telegram.search_telegram(
         "test topic",
         "2026-08-01",
@@ -141,7 +145,8 @@ def test_search_returns_error_without_token():
         config={"TELEGRAM_SOURCES": "aipost"},
     )
     assert result["items"] == []
-    assert "SCRAPECREATORS_API_KEY" in result.get("error", "")
+    assert result["backend"] == telegram.BACKEND_KEYLESS
+    assert "error" not in result
 
 
 # ---- pagination and date filtering (mocked HTTP) ----

@@ -369,10 +369,10 @@ def available_sources(
         available.append("pinterest")
     # Telegram: opt-in via INCLUDE_SOURCES AND requires a channel list. The
     # channel list (TELEGRAM_SOURCES env or --telegram-sources CLI) is the gate:
-    # without named channels there is no discovery endpoint to call.
-    if config.get("SCRAPECREATORS_API_KEY") and (
-        "telegram" in include_sources or (requested_sources and "telegram" in requested_sources)
-    ):
+    # without named channels there is no discovery endpoint to call. No key is
+    # needed: without SCRAPECREATORS_API_KEY the keyless t.me/s backend serves
+    # the same public posts (see telegram.resolve_backend).
+    if "telegram" in include_sources or (requested_sources and "telegram" in requested_sources):
         if telegram.is_telegram_configured(config):
             available.append("telegram")
     # xquik is a backend of the single "x" source (see env.x_backend_chain),
