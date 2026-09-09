@@ -561,6 +561,11 @@ def _render_corpus_section(report: schema.Report, limit: int = 8) -> list[str]:
         )
         if path:
             lines.append(f"  - File: `{_defang_corpus_sentinels(path)}`")
+        canonical = str((primary.metadata if primary else {}).get("canonical_url") or "")
+        if canonical:
+            # Bridged items keep the opaque corpus:// key so private text never
+            # fuses with public evidence; the original link is shown here only.
+            lines.append(f"  - Link: {_defang_corpus_sentinels(canonical)}")
         if candidate.snippet:
             lines.append(
                 f"  - {_defang_corpus_sentinels(_truncate(candidate.snippet, 300))}"
