@@ -579,17 +579,35 @@ def read_synthesis_file(path: str) -> str:
         raise SystemExit(2)
 
 
-def _scoped_store_db(args: argparse.Namespace) -> Path | None:
-    """Scoped runs write findings inside the save dir, matching scoped reads.
+def _resolve_store_db(args: argparse.Namespace, config: dict[str, Any]) -> None:
+    """Resolve ``--db`` onto ``args.db``: flag > ``LAST30DAYS_DB_PATH`` env > ``.env``.
 
-    An explicit store path (``--db`` / ``LAST30DAYS_DB_PATH``, pinned into
-    ``store._db_override`` by main()) wins over save-dir scoping: orchestrators
-    export both a memory dir and a dedicated DB, and the DB is the contract.
+    Mirrors the ``--save-dir`` fallback: the ``is None`` check keeps an explicit
+    empty flag from falling through to the environment, and empty values
+    collapse to "no override". The resolved path is also published as
+    ``config["_LAST30DAYS_STORE_DB"]`` so the prior-run library context reads
+    the same store this run writes (pipeline._load_library_context).
     """
-    import store
+    if args.db is None:
+        env_db = os.environ.get("LAST30DAYS_DB_PATH")
+        args.db = env_db if env_db is not None else config.get("LAST30DAYS_DB_PATH")
+    args.db = args.db or None
+    if args.db:
+        config["_LAST30DAYS_STORE_DB"] = str(Path(args.db).expanduser())
 
-    if store._db_override is not None:
-        return store._db_override
+
+def _scoped_store_db(args: argparse.Namespace) -> Path | None:
+    """Resolve the store every ``store.scoped_db`` block in this run targets.
+
+    Precedence: an explicit ``--db`` (already env/.env-resolved by ``_main``)
+    wins, because orchestrators export both a memory dir and a dedicated DB
+    and the DB is the contract; otherwise scoped runs write findings inside
+    the save dir, matching scoped reads; otherwise ``None`` keeps the shared
+    store. One resolver, one code path.
+    """
+    explicit = getattr(args, "db", None)
+    if explicit:
+        return Path(explicit).expanduser()
     save_dir = getattr(args, "save_dir", None)
     if save_dir:
         return Path(save_dir).expanduser().resolve() / "research.db"
@@ -2865,12 +2883,11 @@ def _run_library_search(
                 if args.save_dir else library_index.DEFAULT_LIBRARY_DB
             ),
             # A scoped search must never merge in the shared store: one
-            # client's sightings would leak into another client's scope. A
-            # scoped store is read only if it exists inside the save dir.
-            store_db_path=(
-                memory_dir.resolve() / "research.db"
-                if args.save_dir else library_index.DEFAULT_STORE_DB
-            ),
+            # client's sightings would leak into another client's scope. The
+            # same resolver that picks the store research WRITES picks the one
+            # search READS: explicit --db, else the save-dir scoped store (read
+            # only if it exists inside the save dir), else the shared default.
+            store_db_path=_scoped_store_db(args) or library_index.DEFAULT_STORE_DB,
         )
     except library_index.LibrarySearchUnavailable as exc:
         sys.stderr.write(f"[last30days] Library search unavailable: {exc}.\n")
@@ -2984,20 +3001,7 @@ def _main(
         env_val = os.environ.get("LAST30DAYS_MEMORY_DIR")
         args.save_dir = env_val if env_val is not None else config.get("LAST30DAYS_MEMORY_DIR")
 
-    # Env-var + config fallback for --db, mirroring the --save-dir block above.
-    # Resolved path is pinned into store._db_override so every store.* helper
-    # (and persist_report below) targets the same DB. Empty strings collapse
-    # to "no override", falling back to LAST30DAYS_DB_PATH (which store.py
-    # also reads) and ultimately the default. The `is None` check on args.db
-    # preserves the flag-wins-over-env-and-config precedence, matching the
-    # save-dir contract documented in CONFIGURATION.md.
-    db_choice: str | None = args.db
-    if db_choice is None:
-        env_db = os.environ.get("LAST30DAYS_DB_PATH")
-        db_choice = env_db if env_db is not None else config.get("LAST30DAYS_DB_PATH")
-    if db_choice:
-        import store as _store
-        _store._db_override = Path(db_choice).expanduser()
+    _resolve_store_db(args, config)
 
     # Surface SSH-routing config as an env var so library modules (e.g.
     # youtube_yt) can read it without taking a config dependency. This

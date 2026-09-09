@@ -29,29 +29,15 @@ from lib import dedupe, entity_extract, schema
 DB_DIR = Path.home() / ".local" / "share" / "last30days"
 DB_PATH = DB_DIR / "research.db"
 
-# In-process override for testing and for the engine's --db flag resolution.
-# Engine main() sets this when --db / LAST30DAYS_DB_PATH supplies a path so
-# every store.* helper (and sibling consumers like briefing.py and watchlist.py
-# when invoked under the same env) lands on the same DB. Tests still set it
-# directly for the in-process path-swap pattern.
+# Allow override for testing (and scoped_db below)
 _db_override: Optional[Path] = None
 
 
 def _get_db_path() -> Path:
-    """Resolve the SQLite store path.
-
-    Precedence (highest wins):
-      1. ``_db_override`` set in-process (tests; engine main() after flag/env
-         resolution).
-      2. ``LAST30DAYS_DB_PATH`` environment variable. Honored at every entry
-         point so sibling scripts that don't go through last30days.py main()
-         (briefing.py, watchlist.py) still target the per-engagement DB when
-         the orchestrator exports the env var.
-      3. ``DB_PATH`` default (``~/.local/share/last30days/research.db``).
-
-    Empty-string env values fall through to the default so an accidental
-    ``LAST30DAYS_DB_PATH=`` shell export doesn't try to open ``Path('')``.
-    """
+    """Scoped override, else ``LAST30DAYS_DB_PATH`` (so briefing.py and
+    watchlist.py, which never pass through the engine's flag resolution, still
+    reach an orchestrator's dedicated DB), else the shared default. Empty env
+    values fall through."""
     if _db_override is not None:
         return _db_override
     env_val = os.environ.get("LAST30DAYS_DB_PATH")
