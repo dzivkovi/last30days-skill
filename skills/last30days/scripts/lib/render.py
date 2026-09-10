@@ -593,6 +593,25 @@ _FRESHNESS_PRIORITY = {
 }
 
 
+def _evidence_report(report: schema.Report, *, local_markers: bool = True) -> schema.Report:
+    """The publishable evidence half of a report.
+
+    ``schema.without_sources`` strips corpus evidence and the corroboration
+    marker (the marker reveals that a private file names an article). Renders
+    that stay on the local screen (compact, context, brief, comparison blocks)
+    re-attach the marker from the caller's report; renders that persist to disk
+    (``render_full``, the saved markdown the library scans and publishes, and
+    ``render_for_html``) do not, because the text-level strippers in
+    ``library``, ``library_index`` and ``html_render`` only remove the private
+    block, never a token on a public line. A publish path hands in an already
+    sanitized report, so nothing can come back either way.
+    """
+    evidence_report = schema.without_sources(report, {"corpus"})
+    if not local_markers:
+        return evidence_report
+    return _with_local_markers(report, evidence_report)
+
+
 def _with_local_markers(report: schema.Report, evidence_report: schema.Report) -> schema.Report:
     """Re-attach the local-only corroboration marker to the sanitized evidence copy.
 
@@ -774,8 +793,7 @@ def render_compact(
     register: str = "default",
 ) -> str:
     audience = registers.get_register(register)
-    evidence_report = schema.without_sources(report, {"corpus"})
-    evidence_report = _with_local_markers(report, evidence_report)
+    evidence_report = _evidence_report(report)
     non_empty = [s for s, items in sorted(report.items_by_source.items()) if items]
     lines = [
         *_render_badge(),
@@ -951,8 +969,7 @@ def render_for_html(
     sections so direct HTML output reflects the selected audience preset.
     """
     audience = registers.get_register(register)
-    evidence_report = schema.without_sources(report, {"corpus"})
-    evidence_report = _with_local_markers(report, evidence_report)
+    evidence_report = _evidence_report(report, local_markers=False)
     lines = [
         *_render_badge(),
         *_render_html_metadata(report),
@@ -1579,8 +1596,7 @@ def _render_entity_evidence_block(
     fun_params: dict,
 ) -> list[str]:
     """Render one entity's clusters and best-takes inside the evidence envelope."""
-    evidence_report = schema.without_sources(report, {"corpus"})
-    evidence_report = _with_local_markers(report, evidence_report)
+    evidence_report = _evidence_report(report)
     candidate_by_id = {c.candidate_id: c for c in evidence_report.ranked_candidates}
     requested_clusters = evidence_report.clusters[:cluster_limit]
     visible_clusters = _clusters_clearing_relevance_floor(
@@ -1676,8 +1692,7 @@ def render_comparison_multi_context(
         lines.extend(resolved_block)
         lines.append("")
     for label, report in entity_reports:
-        evidence_report = schema.without_sources(report, {"corpus"})
-        evidence_report = _with_local_markers(report, evidence_report)
+        evidence_report = _evidence_report(report)
         requested_clusters = evidence_report.clusters[:cluster_limit]
         visible_clusters = _clusters_clearing_relevance_floor(
             evidence_report,
@@ -1777,8 +1792,7 @@ def render_full(report: schema.Report, save_path: str | None = None) -> str:
     When ``save_path`` is provided, the deterministic emoji footer is appended
     so the saved artifact cites the file actually written (collision fallback
     included), matching the stdout footer contract."""
-    evidence_report = schema.without_sources(report, {"corpus"})
-    evidence_report = _with_local_markers(report, evidence_report)
+    evidence_report = _evidence_report(report, local_markers=False)
     # Start with the same header as compact
     non_empty = [s for s, items in sorted(report.items_by_source.items()) if items]
     lines = [
@@ -2019,8 +2033,7 @@ def _format_item_engagement(item: schema.SourceItem) -> str:
 
 
 def render_context(report: schema.Report, cluster_limit: int = 6) -> str:
-    evidence_report = schema.without_sources(report, {"corpus"})
-    evidence_report = _with_local_markers(report, evidence_report)
+    evidence_report = _evidence_report(report)
     candidate_by_id = {
         candidate.candidate_id: candidate
         for candidate in evidence_report.ranked_candidates
@@ -2110,8 +2123,7 @@ def render_brief(report: schema.Report, cluster_limit: int = 8) -> str:
     Audience Questions, and Source Clusters. Sections 2-4 are omitted when there
     is no matching data; Sections 1 and 5 always appear.
     """
-    evidence_report = schema.without_sources(report, {"corpus"})
-    evidence_report = _with_local_markers(report, evidence_report)
+    evidence_report = _evidence_report(report)
     non_empty = [s for s, items in sorted(report.items_by_source.items()) if items]
     lines = [
         f"# Production Brief: {report.topic}",
@@ -2371,7 +2383,7 @@ def _render_candidate(
         detail_parts.append("interaction:→@" + ",@".join(interaction_targets[:2]))
     # A bridged file in the private corpus names this same article; the
     # marker is local-only and stripped by schema.without_sources on export.
-    if (candidate.metadata or {}).get("corroborated_by_corpus"):
+    if (candidate.metadata or {}).get(fusion.CORROBORATION_KEY):
         detail_parts.append("in your files")
     details = " | ".join(part for part in detail_parts if part)
     lines = [

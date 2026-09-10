@@ -339,9 +339,24 @@ def _corpus_canonical_key(candidate: schema.Candidate) -> str:
         if item.source != "corpus":
             continue
         canonical = str((item.metadata or {}).get("canonical_url") or "").strip()
-        if canonical.lower().startswith(("http://", "https://")):
-            return _normalize_url(canonical)
+        if not canonical.lower().startswith(("http://", "https://")):
+            continue
+        try:
+            return _scheme_free(_normalize_url(canonical))
+        except ValueError:
+            # A malformed frontmatter URL must not abort the run; it just does
+            # not corroborate anything.
+            continue
     return ""
+
+
+def _scheme_free(key: str) -> str:
+    """Candidate keys keep the scheme (a feed may link http while the search
+    backend returns https); corroboration matches without it."""
+    for prefix in ("https://", "http://"):
+        if key.startswith(prefix):
+            return key[len(prefix):]
+    return key
 
 
 def corroborate_bridged_items(candidates: dict[str, schema.Candidate]) -> int:
@@ -357,11 +372,11 @@ def corroborate_bridged_items(candidates: dict[str, schema.Candidate]) -> int:
     candidate's marker is stripped at the publication boundary. Returns the
     number of public candidates boosted.
     """
-    public_by_key = {
-        key: candidate
-        for key, candidate in candidates.items()
-        if not any(item.source == "corpus" for item in candidate.source_items)
-    }
+    public_by_key: dict[str, schema.Candidate] = {}
+    for key, candidate in candidates.items():
+        if any(item.source == "corpus" for item in candidate.source_items):
+            continue
+        public_by_key.setdefault(_scheme_free(key), candidate)
     boosted = 0
     for candidate in candidates.values():
         canonical_key = _corpus_canonical_key(candidate)

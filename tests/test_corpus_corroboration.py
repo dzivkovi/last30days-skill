@@ -160,3 +160,49 @@ def test_local_render_marks_the_public_article_and_keeps_the_file_in_the_private
     assert "## From your files" in rendered and SECRET in rendered
     public_lines = [line for line in rendered.splitlines() if "Agent memory article" in line]
     assert public_lines and all(SECRET not in line for line in public_lines)
+
+
+def test_malformed_frontmatter_url_never_aborts_the_run():
+    streams = {("primary", "web"): [_web("W1", ARTICLE, "Agent memory article")], ("primary", "corpus"): [_corpus("http://[bad")]}
+
+    candidates = _fuse(streams)
+
+    assert {c.source for c in candidates} == {"web", "corpus"}
+    assert all("corroborated_by_corpus" not in c.metadata for c in candidates)
+
+
+def test_http_feed_link_corroborates_the_https_public_copy():
+    streams = {("primary", "web"): [_web("W1", ARTICLE, "Agent memory article")], ("primary", "corpus"): [_corpus("http://example.com/news/agent-memory")]}
+
+    candidates = _fuse(streams)
+
+    public = next(c for c in candidates if c.source == "web")
+    assert public.metadata["corroborated_by_corpus"] == 1
+
+
+def test_two_files_naming_one_article_share_the_cap():
+    streams = {
+        ("primary", "web"): [_web("W1", ARTICLE, "Agent memory article")],
+        ("primary", "corpus"): [_corpus(ARTICLE, "C1"), _corpus(ARTICLE, "C2")],
+    }
+
+    candidates = _fuse(streams)
+
+    public = next(c for c in candidates if c.source == "web")
+    assert public.metadata["corroborated_by_corpus"] == 2
+    assert public.metadata["corroboration_boost"] == fusion.CORPUS_CORROBORATION_CAP
+    assert public.rrf_score == 1.0 / 61 + fusion.CORPUS_CORROBORATION_CAP
+
+
+def test_persisted_renders_never_carry_the_marker_but_screen_renders_do():
+    streams = {("primary", "web"): [_web("W1", ARTICLE, "Agent memory article")], ("primary", "corpus"): [_corpus()]}
+    report = _report(_fuse(streams))
+
+    assert "in your files" in render.render_compact(report)  # the screen render the model reads
+    # The saved markdown is what library.scan_library, the library brief publish
+    # and the feed read; their strippers only remove the private block.
+    assert "in your files" not in render.render_full(report)
+    assert "in your files" not in render.render_for_html(report)
+    sanitized = schema.without_sources(report, {"corpus"})
+    for renderer in (render.render_compact, render.render_context, render.render_brief, render.render_full, render.render_for_html):
+        assert "in your files" not in renderer(sanitized) and SECRET not in renderer(sanitized)
