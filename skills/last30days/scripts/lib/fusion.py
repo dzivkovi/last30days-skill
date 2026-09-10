@@ -10,6 +10,13 @@ from . import schema
 
 # Standard RRF smoothing constant (Cormack et al. 2009)
 RRF_K = 60
+# A bridged corpus item that names the same article as a public candidate
+# transfers its own vote to that candidate instead of merging with it, so
+# private text never rides along. The transfer is capped at one top-rank
+# stream vote: corroboration can lift an article past its neighbours, never
+# past every other stream combined.
+CORPUS_CORROBORATION_CAP = 1.0 / (RRF_K + 1)
+CORROBORATION_KEY = "corroborated_by_corpus"
 
 
 def _candidate_sort_key(c: schema.Candidate) -> tuple:
@@ -326,6 +333,54 @@ def _diversify_pool(
     return pool[:pool_limit]
 
 
+def _corpus_canonical_key(candidate: schema.Candidate) -> str:
+    """Normalized canonical URL of a bridged corpus candidate, or empty."""
+    for item in candidate.source_items:
+        if item.source != "corpus":
+            continue
+        canonical = str((item.metadata or {}).get("canonical_url") or "").strip()
+        if canonical.lower().startswith(("http://", "https://")):
+            return _normalize_url(canonical)
+    return ""
+
+
+def corroborate_bridged_items(candidates: dict[str, schema.Candidate]) -> int:
+    """Let a private corpus item and the same public article corroborate each
+    other in ranking without merging them.
+
+    A corpus file bridged from a feed carries ``metadata.canonical_url``; its
+    candidate keeps the opaque ``corpus://`` key (PR #24) so fusion never copies
+    private text onto a public candidate. Here the corpus candidate's RRF vote,
+    capped at ``CORPUS_CORROBORATION_CAP``, is added to the public candidate whose
+    key is the same normalized URL, and both sides are marked in metadata. The
+    corpus candidate stays a separate candidate in the private block; the public
+    candidate's marker is stripped at the publication boundary. Returns the
+    number of public candidates boosted.
+    """
+    public_by_key = {
+        key: candidate
+        for key, candidate in candidates.items()
+        if not any(item.source == "corpus" for item in candidate.source_items)
+    }
+    boosted = 0
+    for candidate in candidates.values():
+        canonical_key = _corpus_canonical_key(candidate)
+        if not canonical_key:
+            continue
+        public = public_by_key.get(canonical_key)
+        if public is None:
+            continue
+        already = float(public.metadata.get("corroboration_boost", 0.0))
+        room = max(0.0, CORPUS_CORROBORATION_CAP - already)
+        boost = min(max(candidate.rrf_score, 0.0), room)
+        public.rrf_score += boost
+        public.metadata["corroboration_boost"] = already + boost
+        public.metadata[CORROBORATION_KEY] = int(public.metadata.get(CORROBORATION_KEY, 0)) + 1
+        candidate.metadata.setdefault("corroborates", []).append(public.candidate_id)
+        boosted += 1
+    return boosted
+
+
 def weighted_rrf(
     streams: dict[tuple[str, str], list[schema.SourceItem]],
     plan: schema.QueryPlan,
@@ -442,6 +497,7 @@ def weighted_rrf(
             if len(candidate.snippet.split()) < len(item.snippet.split()):
                 candidate.snippet = item.snippet
 
+    corroborate_bridged_items(candidates)
     fused = sorted(candidates.values(), key=_candidate_sort_key)
     fused = _apply_per_author_cap(fused, first_party_handles=first_party_handles)
     from . import rerank
