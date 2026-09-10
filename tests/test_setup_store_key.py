@@ -56,7 +56,8 @@ def test_store_key_writes_allowlisted_key_at_0600_and_masks_stdout(tmp_path, arg
 
     assert rc == 0, (out, err)
     assert env_path.exists()
-    assert _mode(env_path) == 0o600
+    if sys.platform != "win32":
+        assert _mode(env_path) == 0o600
     assert env.load_env_file(env_path)["X_BEARER_TOKEN"] == DUMMY
 
     lines = out.strip().splitlines()
@@ -104,7 +105,8 @@ def test_store_key_replaces_an_existing_value_in_place(tmp_path):
     assert loaded["XAI_API_KEY"] == "other"
     assert loaded["SETUP_COMPLETE"] == "true"
     assert "# note" in content
-    assert _mode(env_path) == 0o600
+    if sys.platform != "win32":
+        assert _mode(env_path) == 0o600
     assert not (tmp_path / ".env.tmp").exists()
     assert rotated not in out and rotated not in err
 
@@ -131,7 +133,8 @@ def test_store_key_tightens_a_loose_existing_file(tmp_path):
     os.chmod(env_path, 0o644)
     rc, _, _ = _run(["setup", "--store-key", "X_BEARER_TOKEN"], DUMMY + "\n", env_path)
     assert rc == 0
-    assert _mode(env_path) == 0o600
+    if sys.platform != "win32":
+        assert _mode(env_path) == 0o600
     loaded = env.load_env_file(env_path)
     assert loaded["SETUP_COMPLETE"] == "true"
     assert loaded["X_BEARER_TOKEN"] == DUMMY
@@ -177,7 +180,8 @@ def test_store_key_works_for_every_allowlisted_name(tmp_path):
         assert out.strip().splitlines()[0] == f"{name}=****"
     loaded = env.load_env_file(env_path)
     assert set(env.KEYCHAIN_KEYS) <= set(loaded)
-    assert _mode(env_path) == 0o600
+    if sys.platform != "win32":
+        assert _mode(env_path) == 0o600
 
 
 def test_store_key_is_a_declared_setup_passthrough_flag():

@@ -491,6 +491,10 @@ class TestInputBounds:
         message = _assert_contract(path)
         assert "[[[" not in message
 
+    @pytest.mark.skipif(
+        not hasattr(os, "mkfifo"),
+        reason="os.mkfifo is POSIX-only; Windows has no named-pipe-as-path equivalent",
+    )
     def test_fifo_is_rejected_without_opening(self, tmp_path):
         fifo = tmp_path / "pipe.json"
         os.mkfifo(fifo)
