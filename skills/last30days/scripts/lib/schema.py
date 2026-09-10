@@ -746,6 +746,11 @@ def without_sources(report: Report, excluded_sources: set[str]) -> Report:
             for key, rank in candidate.native_ranks.items()
             if key.rsplit(":", 1)[-1].lower() not in excluded
         }
+        if "corpus" in excluded:
+            # The corroboration marker says a private file names this article;
+            # that fact is private too. The rank lift itself stays.
+            candidate.metadata.pop("corroborated_by_corpus", None)
+            candidate.metadata.pop("corroboration_boost", None)
         kept_candidates.append(candidate)
     clean.ranked_candidates = kept_candidates
     candidate_by_id = {

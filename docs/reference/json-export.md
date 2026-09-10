@@ -23,7 +23,7 @@ The raw profile is intentionally unversioned and may change when pipeline intern
 
 ### Local corpus privacy
 
-Evidence from `--corpus` / `LAST30DAYS_CORPUS_DIRS` is excluded from the versioned agent profile by default. The exclusion removes corpus results, corpus-only clusters, corpus source outcomes, freshness verdicts, and titles derived from a corpus representative. Set `LAST30DAYS_CORPUS_IN_EXPORT=1` only for a run whose JSON is intentionally allowed to contain local file contents. This opt-in does not change the schema shape or version; it permits `source: "corpus"` entries in the existing result fields. The unversioned `raw` profile is a complete local debug dump and may contain corpus paths and text.
+Evidence from `--corpus` / `LAST30DAYS_CORPUS_DIRS` is excluded from the versioned agent profile by default. The exclusion removes corpus results, corpus-only clusters, corpus source outcomes, freshness verdicts, and titles derived from a corpus representative. Set `LAST30DAYS_CORPUS_IN_EXPORT=1` only for a run whose JSON is intentionally allowed to contain local file contents. This opt-in does not change the schema shape or version; it permits `source: "corpus"` entries in the existing result fields. The unversioned `raw` profile is a complete local debug dump and may contain corpus paths and text. A corpus file whose frontmatter `url` names a public result lifts that result's `relevance_score` slightly (one capped fusion vote); the export carries no marker for it, by design, so the lift is not traceable to a private file.
 
 ## Discovery export
 
