@@ -64,6 +64,7 @@ def _run_hook(tmp_path: Path, overrides: dict[str, str]) -> subprocess.Completed
         [bash_path, str(HOOK)],
         capture_output=True,
         text=True,
+        encoding="utf-8",  # the hook prints an em-dash; Windows would otherwise decode it as cp1252
         env=env,
         cwd=str(tmp_path),
         timeout=30,
